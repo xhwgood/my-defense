@@ -1,0 +1,36 @@
+# ===== Python =====
+# 字节码与缓存
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 打包 / 分发
+build/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+
+# 虚拟环境
+.venv/
+venv/
+env/
+ENV/
+
+# 测试 / 覆盖率 / 类型检查缓存
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# ===== 编辑器 / IDE =====
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ===== 操作系统 =====
+.DS_Store
+Thumbs.db
+Desktop.ini
