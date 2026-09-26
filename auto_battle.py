@@ -120,7 +120,7 @@ MATCH_THRESHOLD = 0.85                          # 模板匹配阈值
 
 # 通关场景
 CLEAR_POINT = (216, 300)
-CLEAR_COLOR = (0x96, 0x4D, 0x1D)                 # #964D1D
+CLEAR_COLOR = (0x96, 0x4E, 0x1D)                 # #964E1D
 CLEAR_CLICK = (294, 1281)
 
 # 场景识别规则：(场景名, x, y, RGB 元组)。后续新增场景往这里加。
@@ -363,6 +363,7 @@ def foreground_click(hwnd, x, y):
 # ---- 各场景的处理逻辑（后续按需补充）----
 def on_start(hwnd, buf, w, h):
     print(f"  → 检测到开始界面，点击开始按钮 {START_BTN}")
+    time.sleep(0.7)
     foreground_click(hwnd, START_BTN[0], START_BTN[1])
 
 
