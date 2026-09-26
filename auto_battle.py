@@ -107,6 +107,7 @@ CHOOSE_CARD_POINT = (357, 297)
 CHOOSE_CARD_COLOR = (0x7B, 0xFF, 0xE3)          # #7BFFE3
 CARD_SEARCH_BOX = (45, 758, 812, 924)           # 找图范围 (x1, y1, x2, y2)
 CARD_IMAGE_LIST = [                             # 按顺序查找
+    r"find_pic\蜂巢-组合.png",
     r"find_pic\蜂巢.png",
     r"find_pic\蜂巢-进阶.png",
     r"find_pic\干扰.png",
@@ -186,6 +187,26 @@ def sleep_check(seconds):
             return True
         time.sleep(0.05)
     return False
+
+
+def wait_scene_change(hwnd, from_scene, timeout=5.0):
+    """快速轮询（每 0.1 秒），直到画面离开 from_scene（转场动画）或超时。
+    返回离开后的场景名；超时或按 F5 停止则返回 from_scene。"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        check_f5()
+        if _stop:
+            return from_scene
+        cap = capture_window(hwnd)
+        if cap is None:
+            time.sleep(0.1)
+            continue
+        w, h, buf = cap
+        s = detect_scene(buf, w, h)
+        if s != from_scene:
+            return s
+        time.sleep(0.1)
+    return from_scene
 
 
 def capture_window(hwnd):
@@ -348,13 +369,28 @@ def on_start(hwnd, buf, w, h):
 def on_choose_card(hwnd, buf, w, h):
     print("  → 检测到选择卡牌场景，开始找图…")
     x1, y1, x2, y2 = CARD_SEARCH_BOX
-    path, x, y = find_first_image(buf, w, h, CARD_IMAGE_LIST, x1, y1, x2, y2)
-    if path is not None:
-        print(f"  → 找到 {path}，左上角 ({x},{y})，点击")
-        foreground_click(hwnd, x, y)
-    else:
-        print(f"  → 未找到任何卡牌图，点击兜底坐标 {CARD_FALLBACK_CLICK}")
-        foreground_click(hwnd, CARD_FALLBACK_CLICK[0], CARD_FALLBACK_CLICK[1])
+    # 卡片有翻转动画：重新截当前画面，并最多重试几次，等卡片翻到正面
+    for attempt in range(4):
+        cap = capture_window(hwnd)
+        if cap is None:
+            print("  → 截图失败")
+            break
+        w, h, buf = cap
+        path, x, y = find_first_image(buf, w, h, CARD_IMAGE_LIST, x1, y1, x2, y2)
+        if path is not None:
+            print(f"  → 找到 {path}，左上角 ({x},{y})，点击")
+            foreground_click(hwnd, x, y)
+            # 再次点击，跳过卡牌进阶的动画
+            time.sleep(0.3)
+            foreground_click(hwnd, x, y)
+            return
+        if attempt < 3 and sleep_check(0.5):
+            return
+    print(f"  → 未找到任何卡牌图，点击兜底坐标 {CARD_FALLBACK_CLICK}")
+    foreground_click(hwnd, CARD_FALLBACK_CLICK[0], CARD_FALLBACK_CLICK[1])
+    # 再次点击，跳过卡牌进阶的动画
+    time.sleep(0.3)
+    foreground_click(hwnd, CARD_FALLBACK_CLICK[0], CARD_FALLBACK_CLICK[1])
 
 
 def on_failed(hwnd, buf, w, h):
@@ -384,6 +420,7 @@ def on_extra(hwnd, buf, w, h):
 
 def on_clear(hwnd, buf, w, h):
     print(f"  → 检测到通关场景，点击 {CLEAR_CLICK}")
+    sleep_check(2.0)
     foreground_click(hwnd, CLEAR_CLICK[0], CLEAR_CLICK[1])
     sleep_check(2.0)
 
@@ -474,6 +511,12 @@ def main():
                 if sleep_check(1.0):
                     break
                 handler(hwnd, buf, w, h)
+                # 动作执行后快速轮询，等画面切走（转场动画），
+                # 并把 last_scene 更新成新画面，避免错过紧挨着的同场景
+                next_scene = wait_scene_change(hwnd, scene)
+                if next_scene != scene:
+                    print(f"[场景] → {next_scene}")
+                    last_scene = next_scene
         if sleep_check(1.0):
             break
 
