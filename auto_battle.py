@@ -10,7 +10,7 @@ auto_battle.py —— “我的防线”自动化战斗脚本。
 当前已实现的场景检测规则（坐标 = 窗口内物理像素；窗口对齐到 (0,0) 后即屏幕坐标）：
   开始界面:   (303, 1299) 颜色 == #4DBDA5  → 点击该坐标（开始按钮）
   选择卡牌:   (357, 297)  颜色 == #7BFFE3  → 在 (45,758)-(812,924) 内按顺序找图并点击
-  挑战失败:   (453, 401)  颜色 == #BAC0D2  → 点击 (434, 1250)
+  挑战失败:   (453, 401)  颜色 == #BAC0D2  → 点击 (504, 1250)
   额外机会:   (408, 234)  颜色 == #7BFFE3  → 点击 (159,795)，再按 (515,1437) 色值分支点击
 
 用法：
@@ -92,7 +92,7 @@ START_BTN = (303, 1299)
 # 挑战失败场景
 FAILED_POINT = (453, 401)
 FAILED_COLOR = (0xBA, 0xC0, 0xD2)               # #BAC0D2
-FAILED_CLICK = (434, 1250)
+FAILED_CLICK = (504, 1250)
 
 # 额外机会场景
 EXTRA_POINT = (408, 234)
@@ -122,6 +122,9 @@ MATCH_THRESHOLD = 0.85                          # 模板匹配阈值
 CLEAR_POINT = (216, 300)
 CLEAR_COLOR = (0x96, 0x4E, 0x1D)                 # #964E1D
 CLEAR_CLICK = (294, 1281)
+
+# 找色容差：每个通道相差不超过该值即视为同色，容忍渲染抖动
+COLOR_TOL = 3
 
 # 场景识别规则：(场景名, x, y, RGB 元组)。后续新增场景往这里加。
 RULES = [
@@ -189,7 +192,7 @@ def sleep_check(seconds):
     return False
 
 
-def wait_scene_change(hwnd, from_scene, timeout=5.0):
+def wait_scene_change(hwnd, from_scene, timeout=2.0):
     """快速轮询（每 0.1 秒），直到画面离开 from_scene（转场动画）或超时。
     返回离开后的场景名；超时或按 F5 停止则返回 from_scene。"""
     deadline = time.time() + timeout
@@ -283,12 +286,30 @@ def color_at(hwnd, x, y):
     return pixel_color(buf, w, x, y)
 
 
+def color_close(got, target, tol=COLOR_TOL):
+    """三个通道都在容差内则视为同色（容忍渲染抖动）。"""
+    return all(abs(g - t) <= tol for g, t in zip(got, target))
+
+
 def detect_scene(buf, w, h):
     """按规则表逐条找色，命中则返回场景名，否则返回“未知”。"""
     for scene, x, y, rgb in RULES:
-        if 0 <= x < w and 0 <= y < h and pixel_color(buf, w, x, y) == rgb:
+        if 0 <= x < w and 0 <= y < h and color_close(pixel_color(buf, w, x, y), rgb):
             return scene
     return SCENE_UNKNOWN
+
+
+def dump_rule_colors(w, h, buf):
+    """打印所有规则坐标处的实际色值（用于定位“未知”画面到底是什么）。"""
+    for scene, x, y, rgb in RULES:
+        if 0 <= x < w and 0 <= y < h:
+            got = pixel_color(buf, w, x, y)
+            exp = "#%02X%02X%02X" % rgb
+            act = "#%02X%02X%02X" % got
+            print(f"    [调试] 规则[{scene}] ({x},{y}) 期望 {exp} 实际 {act}  "
+                  f"{'✅' if color_close(got, rgb) else '❌'}")
+        else:
+            print(f"    [调试] 规则[{scene}] ({x},{y}) 超出截图范围 {w}x{h}")
 
 
 # ---- 找图 ----
@@ -407,8 +428,9 @@ def on_extra(hwnd, buf, w, h):
         return
 
     c = color_at(hwnd, EXTRA_CHECK_POINT[0], EXTRA_CHECK_POINT[1])
-    if c == EXTRA_CHECK_COLOR:
+    if c is not None and color_close(c, EXTRA_CHECK_COLOR):
         print(f"  → ({EXTRA_CHECK_POINT[0]},{EXTRA_CHECK_POINT[1]}) 命中，点击")
+        foreground_click(hwnd, EXTRA_CHECK_POINT[0], EXTRA_CHECK_POINT[1])
         foreground_click(hwnd, EXTRA_CHECK_POINT[0], EXTRA_CHECK_POINT[1])
     else:
         print(f"  → ({EXTRA_CHECK_POINT[0]},{EXTRA_CHECK_POINT[1]}) 未命中（实际 {c}），点击 {EXTRA_CLICK_ALT}")
@@ -417,13 +439,14 @@ def on_extra(hwnd, buf, w, h):
             return
         print(f"  → 再点击 ({EXTRA_CHECK_POINT[0]},{EXTRA_CHECK_POINT[1]})")
         foreground_click(hwnd, EXTRA_CHECK_POINT[0], EXTRA_CHECK_POINT[1])
+        foreground_click(hwnd, EXTRA_CHECK_POINT[0], EXTRA_CHECK_POINT[1])
 
 
 def on_clear(hwnd, buf, w, h):
     print(f"  → 检测到通关场景，点击 {CLEAR_CLICK}")
-    sleep_check(2.0)
+    sleep_check(0.5)
     foreground_click(hwnd, CLEAR_CLICK[0], CLEAR_CLICK[1])
-    sleep_check(2.0)
+    sleep_check(0.5)
 
 
 HANDLERS = {
@@ -450,7 +473,7 @@ def probe(hwnd):
             got = pixel_color(buf, w, x, y)
             act = "#%02X%02X%02X" % got
             print(f"[+] 规则[{scene}] 坐标 ({x},{y}) 期望 {exp} 实际 {act}  "
-                  f"{'✅ 匹配' if got == rgb else '❌ 不匹配'}")
+                  f"{'✅ 匹配' if color_close(got, rgb) else '❌ 不匹配'}")
         else:
             print(f"[!] 规则[{scene}] 坐标 ({x},{y}) 超出截图范围 {w}x{h}")
 
@@ -485,6 +508,8 @@ def main():
 
     print("[*] 开始场景检测（每秒一次，按 F5 停止）...")
     last_scene = None
+    unknown_start = None
+    unknown_dumped = False
     while True:
         check_f5()
         if _stop:
@@ -508,16 +533,31 @@ def main():
             # 只在进入新场景时执行一次动作，避免每秒重复点击
             handler = HANDLERS.get(scene)
             if handler:
-                # 进入场景后延迟一秒再执行，等画面稳定
-                if sleep_check(1.0):
+                # 进入场景后延迟 2 秒再执行，等画面稳定
+                if sleep_check(2):
                     break
                 handler(hwnd, buf, w, h)
+                # 场景脚本结束后先停 1.5 秒，再检测其他场景
+                if sleep_check(1.5):
+                    break
                 # 动作执行后快速轮询，等画面切走（转场动画），
-                # 并把 last_scene 更新成新画面，避免错过紧挨着的同场景
-                next_scene = wait_scene_change(hwnd, scene)
-                if next_scene != scene:
-                    print(f"[场景] → {next_scene}")
-                    last_scene = next_scene
+                # 结束后重置 last_scene，让下一个画面（无论是否与当前同场景）
+                # 都被重新识别并处理
+                wait_scene_change(hwnd, scene)
+                last_scene = None
+
+        # 新增调试：未知画面持续超过 3 秒时，打印各规则点实际色值，定位未建模的画面
+        if scene == SCENE_UNKNOWN:
+            if unknown_start is None:
+                unknown_start = time.time()
+            elif not unknown_dumped and time.time() - unknown_start >= 3.0:
+                print(f"[调试] 未知画面已持续 {time.time() - unknown_start:.1f} 秒，各规则点实际色值：")
+                dump_rule_colors(w, h, buf)
+                unknown_dumped = True
+        else:
+            unknown_start = None
+            unknown_dumped = False
+
         if sleep_check(1.0):
             break
 
