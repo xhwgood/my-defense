@@ -9,7 +9,7 @@ auto_battle.py —— “我的防线”自动化战斗脚本。
 
 当前已实现的场景检测规则（坐标 = 窗口内物理像素；窗口对齐到 (0,0) 后即屏幕坐标）：
   开始界面:   (303, 1299) 颜色 == #4DBDA5  → 点击该坐标（开始按钮）
-  选择卡牌:   (357, 297)  颜色 == #7BFFE3  → 在 (45,758)-(812,924) 内按顺序找图并点击
+  选择卡牌:   (357, 297)  颜色 == #7BFFE3  → 先按优先级识图，唯一命中直接点；同图多张命中时用 OCR 判定
   挑战失败:   (453, 401)  颜色 == #BAC0D2  → 点击 (504, 1250)
   额外机会:   (408, 234)  颜色 == #7BFFE3  → 点击 (159,795)，再按 (515,1437) 色值分支点击
 
@@ -18,13 +18,14 @@ auto_battle.py —— “我的防线”自动化战斗脚本。
     python auto_battle.py --probe    # 单次探测：打印规则色值 + 找图匹配分（不点击）
     python auto_battle.py --cut x1 y1 x2 y2 输出.png   # 抓当前屏幕裁一块模板图
 
-依赖：ctypes（Windows 自带）+ numpy + opencv-python（找图）。
+依赖：ctypes（Windows 自带）+ numpy + opencv-python + rapidocr_onnxruntime（OCR）。
 """
 
 import ctypes
 import sys
 import time
 from ctypes import wintypes
+from typing import NamedTuple, Tuple
 
 import cv2
 import numpy as np
@@ -63,11 +64,13 @@ EnumProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
 
 class RECT(ctypes.Structure):
+    """Windows RECT 结构：窗口/客户区的矩形边界（left/top/right/bottom）。"""
     _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
                 ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
 
 
 class BITMAPINFOHEADER(ctypes.Structure):
+    """BITMAPINFOHEADER 结构：描述 GetDIBits 读取像素位图的格式。"""
     _fields_ = [
         ("biSize", wintypes.DWORD), ("biWidth", ctypes.c_long),
         ("biHeight", ctypes.c_long), ("biPlanes", wintypes.WORD),
@@ -79,6 +82,7 @@ class BITMAPINFOHEADER(ctypes.Structure):
 
 
 # ---- 场景定义 ----
+# 场景名常量：detect_scene() 的返回值，同时是 HANDLERS 字典的键。
 SCENE_UNKNOWN = "未知"
 SCENE_START = "开始界面"
 SCENE_CHOOSE_CARD = "选择卡牌"
@@ -86,27 +90,47 @@ SCENE_FAILED = "挑战失败"
 SCENE_EXTRA = "额外机会"
 SCENE_CLEAR = "通关"
 
-# 开始按钮坐标（物理像素，窗口已对齐到屏幕 (0,0)）
+
+class SceneRule(NamedTuple):
+    """一条场景识别规则：在某坐标点找指定颜色，命中即判定为对应场景。
+
+    字段:
+        scene: 场景名（对应 SCENE_* 常量）。
+        x:     检测点横坐标（窗口内物理像素）。
+        y:     检测点纵坐标。
+        color: 期望的 RGB 颜色元组，如 (0x4D, 0xBD, 0xA5)。
+    """
+    scene: str
+    x: int
+    y: int
+    color: Tuple[int, int, int]
+
+
+# 开始界面：开始按钮坐标（物理像素，窗口已对齐到屏幕 (0,0)）。
 START_BTN = (303, 1299)
 
 # 挑战失败场景
-FAILED_POINT = (453, 401)
-FAILED_COLOR = (0xBA, 0xC0, 0xD2)               # #BAC0D2
-FAILED_CLICK = (504, 1250)
+FAILED_POINT = (453, 401)                 # 检测点坐标
+FAILED_COLOR = (0xBA, 0xC0, 0xD2)         # 期望色 #BAC0D2
+FAILED_CLICK = (504, 1250)                # 点击坐标
 
 # 额外机会场景
-EXTRA_POINT = (408, 234)
-EXTRA_COLOR = (0x7B, 0xFF, 0xE3)                # #7BFFE3
-EXTRA_CLICK_FIRST = (159, 795)                  # 第一步点击
-EXTRA_CHECK_POINT = (515, 1437)                 # 第二步判断坐标
-EXTRA_CHECK_COLOR = (0xCF, 0xB9, 0x5A)          # #CFB95A
-EXTRA_CLICK_ALT = (423, 786)                    # 未命中时的替代点击
+EXTRA_POINT = (408, 234)                  # 检测点坐标
+EXTRA_COLOR = (0x7B, 0xFF, 0xE3)          # 期望色 #7BFFE3
+EXTRA_CLICK_FIRST = (159, 795)            # 第一步点击
+EXTRA_CHECK_POINT = (515, 1437)           # 第二步判断坐标
+EXTRA_CHECK_COLOR = (0xCF, 0xB9, 0x5A)    # 期望色 #CFB95A
+EXTRA_CLICK_ALT = (423, 786)              # 未命中时的替代点击
 
 # 选择卡牌/等级提升场景
-CHOOSE_CARD_POINT = (357, 297)
-CHOOSE_CARD_COLOR = (0x7B, 0xFF, 0xE3)          # #7BFFE3
-CARD_SEARCH_BOX = (45, 758, 812, 924)           # 找图范围 (x1, y1, x2, y2)
-CARD_IMAGE_LIST = [                             # 按顺序查找
+CHOOSE_CARD_POINT = (357, 297)            # 检测点坐标
+CHOOSE_CARD_COLOR = (0x7B, 0xFF, 0xE3)    # 期望色 #7BFFE3
+
+# 找图（识图）：三张卡牌的卡面图在这块区域内按优先级查找。
+CARD_SEARCH_BOX = (45, 758, 812, 924)     # 找图范围 (x1, y1, x2, y2)
+
+# 卡牌图列表：按优先级顺序（索引越小越优先），顺序必须与 CARD_NAME_LIST 一致。
+CARD_IMAGE_LIST = [
     r"find_pic\蜂巢-组合.png",
     r"find_pic\蜂巢.png",
     r"find_pic\蜂巢-进阶.png",
@@ -115,24 +139,69 @@ CARD_IMAGE_LIST = [                             # 按顺序查找
     r"find_pic\电磁炮.png",
     r"find_pic\电磁炮-进阶.png",
 ]
-CARD_FALLBACK_CLICK = (150, 840)                # 都找不到时的兜底点击
-MATCH_THRESHOLD = 0.85                          # 模板匹配阈值
+
+MATCH_THRESHOLD = 0.85                    # 模板匹配阈值，越低越容易命中
+
+# 三个卡牌识别区域（OCR），格式 (x1, y1, x2, y2)，对应三张可选的卡。
+CARD_OCR_REGIONS = [
+    (41, 700, 249, 745),    # 卡牌1 文字区域
+    (317, 700, 528, 745),   # 卡牌2 文字区域
+    (588, 700, 809, 745),   # 卡牌3 文字区域
+]
+
+# 与上面三个区域一一对应的点击坐标。
+CARD_CLICK_POINTS = [
+    (152, 835),
+    (426, 835),
+    (702, 835),
+]
+
+# 卡牌优先级数组（OCR 用）：索引越小越优先；顺序必须与 CARD_IMAGE_LIST 一致。
+# TODO: 内容仍为占位，等你确认实际的优先级顺序。
+CARD_NAME_LIST = [
+    # 蜂巢
+    "密集蜂群",
+    "强化连射",
+    "电流蜂群",
+    "黄蜂齐射",
+    # 干扰
+    "传送增伤",
+    "范围瓦解",
+    "瓦解爆发",
+    "回溯传送",
+    "电磁力场",
+    "瓦解之力",
+    "随机扰动",
+    "力场持续",
+    "力场扩展",
+    # 电磁炮
+    "陷阱电网",
+    "强化电网",
+    "电磁雷网",
+    "电磁连锁",
+    "反重力装置",
+    "高射轰",
+    "燃爆炮",
+]
+
+CARD_FALLBACK_CLICK = (150, 840)          # 一张都识别不到时的兜底点击
 
 # 通关场景
-CLEAR_POINT = (216, 300)
-CLEAR_COLOR = (0x96, 0x4E, 0x1D)                 # #964E1D
-CLEAR_CLICK = (294, 1281)
+CLEAR_POINT = (216, 300)                  # 检测点坐标
+CLEAR_COLOR = (0x96, 0x4E, 0x1D)          # 期望色 #964E1D
+CLEAR_CLICK = (294, 1281)                 # 点击坐标
 
-# 找色容差：每个通道相差不超过该值即视为同色，容忍渲染抖动
+# 找色容差：每个通道相差不超过该值即视为同色，容忍渲染抖动。
 COLOR_TOL = 3
 
-# 场景识别规则：(场景名, x, y, RGB 元组)。后续新增场景往这里加。
+# 场景识别规则表：按顺序检测，命中第一条即返回对应场景。
+# 后续新增场景时，往这里加一条 SceneRule。
 RULES = [
-    (SCENE_START, START_BTN[0], START_BTN[1], (0x4D, 0xBD, 0xA5)),       # #4DBDA5
-    (SCENE_CHOOSE_CARD, CHOOSE_CARD_POINT[0], CHOOSE_CARD_POINT[1], CHOOSE_CARD_COLOR),
-    (SCENE_FAILED, FAILED_POINT[0], FAILED_POINT[1], FAILED_COLOR),
-    (SCENE_EXTRA, EXTRA_POINT[0], EXTRA_POINT[1], EXTRA_COLOR),
-    (SCENE_CLEAR, CLEAR_POINT[0], CLEAR_POINT[1], CLEAR_COLOR),
+    SceneRule(SCENE_START, START_BTN[0], START_BTN[1], (0x4D, 0xBD, 0xA5)),  # 开始界面 #4DBDA5
+    SceneRule(SCENE_CHOOSE_CARD, CHOOSE_CARD_POINT[0], CHOOSE_CARD_POINT[1], CHOOSE_CARD_COLOR),
+    SceneRule(SCENE_FAILED, FAILED_POINT[0], FAILED_POINT[1], FAILED_COLOR),
+    SceneRule(SCENE_EXTRA, EXTRA_POINT[0], EXTRA_POINT[1], EXTRA_COLOR),
+    SceneRule(SCENE_CLEAR, CLEAR_POINT[0], CLEAR_POINT[1], CLEAR_COLOR),
 ]
 
 
@@ -312,7 +381,7 @@ def dump_rule_colors(w, h, buf):
             print(f"    [调试] 规则[{scene}] ({x},{y}) 超出截图范围 {w}x{h}")
 
 
-# ---- 找图 ----
+# ---- 找图（识图）----
 def imread_unicode(path):
     """读取图片（支持中文路径），返回 BGR numpy 数组；失败返回 None。"""
     try:
@@ -346,13 +415,37 @@ def find_image(buf, w, h, tpl_path, x1, y1, x2, y2, threshold=MATCH_THRESHOLD):
     return None, None, float(max_val)
 
 
-def find_first_image(buf, w, h, image_list, x1, y1, x2, y2, threshold=MATCH_THRESHOLD):
-    """按顺序查找图片列表，返回第一张命中的 (路径, x, y)；都未命中返回 (None, None, None)。"""
-    for path in image_list:
-        r = find_image(buf, w, h, path, x1, y1, x2, y2, threshold)
-        if r is not None and r[0] is not None:
-            return path, r[0], r[1]
-    return None, None, None
+def find_all_images(buf, w, h, tpl_path, x1, y1, x2, y2, threshold=MATCH_THRESHOLD):
+    """在截图 [x1,y1,x2,y2] 区域内找出模板的【所有】匹配位置。
+
+    返回:  绝对坐标 (x, y) 列表（模板左上角）；无匹配返回空列表。
+    同一张卡只报一个点：按匹配分从高到低取互不重叠的峰值，避免相邻像素重复命中。
+    """
+    tpl = imread_unicode(tpl_path)
+    if tpl is None:
+        return []
+    th, tw = tpl.shape[:2]
+
+    img = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)[:, :, :3]  # BGRA -> BGR
+    roi = img[y1:y2, x1:x2]
+    if roi.shape[0] < th or roi.shape[1] < tw:
+        return []
+
+    res = cv2.matchTemplate(roi, tpl, cv2.TM_CCOEFF_NORMED)
+    ys, xs = np.where(res >= threshold)
+    if len(xs) == 0:
+        return []
+
+    # 按匹配分从高到低排序，逐个取与已选位置不重叠的峰值
+    candidates = sorted(zip(res[ys, xs], xs, ys), reverse=True)
+    picks = []
+    for _score, x, y in candidates:
+        if all(abs(x - px) >= tw or abs(y - py) >= th for px, py in picks):
+            picks.append((x, y))
+    return [(x + x1, y + y1) for x, y in picks]
+
+
+# ---- OCR 识别：封装在 ocr_utils.py（recognize / recognize_regions），供多个脚本复用 ----
 
 
 # ---- 前台鼠标点击 ----
@@ -388,8 +481,62 @@ def on_start(hwnd, buf, w, h):
     foreground_click(hwnd, START_BTN[0], START_BTN[1])
 
 
+def _keep_chinese(s):
+    """只保留中文字符：去掉空格、+ 号、罗马数字、数字等 OCR 附带的无关注缀。"""
+    return "".join(ch for ch in s if "一" <= ch <= "鿿")
+
+
+# CARD_NAME_LIST 的中文归一化版本，匹配时用，避免每次重复计算。
+_CARD_NAME_NORM = [_keep_chinese(n) for n in CARD_NAME_LIST]
+
+
+def best_card(texts):
+    """在识别出的文字里挑优先级最高的卡牌。
+
+    texts: 三个区域分别识别出的字符串（与 CARD_OCR_REGIONS / CARD_CLICK_POINTS 一一对应）。
+    返回:  (CARD_NAME_LIST 索引, 对应点击坐标)；全都匹配不到则返回 (None, None)。
+    """
+    best_idx = None
+    best_click = None
+    for text, click in zip(texts, CARD_CLICK_POINTS):
+        t = _keep_chinese(text)
+        if t in _CARD_NAME_NORM:
+            idx = _CARD_NAME_NORM.index(t)
+            if best_idx is None or idx < best_idx:
+                best_idx = idx
+                best_click = click
+    return best_idx, best_click
+
+
+def click_card(hwnd, x, y):
+    """点击某张卡牌，并连点两次（跳过卡牌进阶动画）。"""
+    foreground_click(hwnd, x, y)
+    time.sleep(0.3)
+    foreground_click(hwnd, x, y)
+
+
+def ocr_pick(hwnd, img):
+    """用 OCR 识别三张卡牌文字并按优先级挑一张，返回是否成功点击。"""
+    import ocr_utils
+    texts = ocr_utils.recognize_regions(img, CARD_OCR_REGIONS)
+    print(f"  → OCR 结果：{texts}")
+    idx, click = best_card(texts)
+    if idx is not None:
+        print(f"  → OCR 选中最优先卡牌「{CARD_NAME_LIST[idx]}」，点击 {click}")
+        click_card(hwnd, click[0], click[1])
+        return True
+    return False
+
+
 def on_choose_card(hwnd, buf, w, h):
-    print("  → 检测到选择卡牌场景，开始找图…")
+    """选择卡牌：优先识图，识图唯一命中直接点；同一张图命中多张时转 OCR 判定。
+
+    选择三张卡牌中优先级最高的一张：
+      1. 按 CARD_IMAGE_LIST 顺序识图，某张图恰好命中一处 → 直接点击；
+      2. 同一张图命中多处（画面里有重复卡面/相似卡面）→ OCR 按名字优先级挑一张；
+      3. 所有图都没命中 → OCR 兜底；OCR 也不中 → 点兜底坐标。
+    """
+    print("  → 检测到选择卡牌场景，先识图、必要时 OCR 判定…")
     x1, y1, x2, y2 = CARD_SEARCH_BOX
     # 卡片有翻转动画：重新截当前画面，并最多重试几次，等卡片翻到正面
     for attempt in range(4):
@@ -398,21 +545,37 @@ def on_choose_card(hwnd, buf, w, h):
             print("  → 截图失败")
             break
         w, h, buf = cap
-        path, x, y = find_first_image(buf, w, h, CARD_IMAGE_LIST, x1, y1, x2, y2)
-        if path is not None:
-            print(f"  → 找到 {path}，左上角 ({x},{y})，点击")
-            foreground_click(hwnd, x, y)
-            # 再次点击，跳过卡牌进阶的动画
-            time.sleep(0.3)
-            foreground_click(hwnd, x, y)
+        img = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)[:, :, :3]  # BGRA -> BGR
+
+        # 1) 按优先级顺序识图
+        for path in CARD_IMAGE_LIST:
+            locs = find_all_images(buf, w, h, path, x1, y1, x2, y2)
+            if not locs:
+                continue  # 这种卡不在画面上，看下一优先级
+            if len(locs) == 1:
+                x, y = locs[0]
+                print(f"  → 识图命中 {path}（唯一），点击 ({x},{y})")
+                click_card(hwnd, x, y)
+                return
+            # 同一张图命中多处，图片区分不了，转 OCR 按名字优先级挑
+            print(f"  → 识图命中 {path} 共 {len(locs)} 处，转 OCR 判定…")
+            if ocr_pick(hwnd, img):
+                return
+            # OCR 也没区分出来：都是同一张卡，点第一处命中即可
+            x, y = locs[0]
+            print(f"  → OCR 未区分，退回点击第一处 ({x},{y})")
+            click_card(hwnd, x, y)
             return
+
+        # 2) 所有图都没命中，OCR 兜底一次
+        print("  → 识图未命中任何卡牌，转 OCR 兜底…")
+        if ocr_pick(hwnd, img):
+            return
+
         if attempt < 3 and sleep_check(0.5):
             return
-    print(f"  → 未找到任何卡牌图，点击兜底坐标 {CARD_FALLBACK_CLICK}")
-    foreground_click(hwnd, CARD_FALLBACK_CLICK[0], CARD_FALLBACK_CLICK[1])
-    # 再次点击，跳过卡牌进阶的动画
-    time.sleep(0.3)
-    foreground_click(hwnd, CARD_FALLBACK_CLICK[0], CARD_FALLBACK_CLICK[1])
+    print(f"  → 识图和 OCR 都没结果，点击兜底坐标 {CARD_FALLBACK_CLICK}")
+    click_card(hwnd, CARD_FALLBACK_CLICK[0], CARD_FALLBACK_CLICK[1])
 
 
 def on_failed(hwnd, buf, w, h):
@@ -431,6 +594,7 @@ def on_extra(hwnd, buf, w, h):
     if c is not None and color_close(c, EXTRA_CHECK_COLOR):
         print(f"  → ({EXTRA_CHECK_POINT[0]},{EXTRA_CHECK_POINT[1]}) 命中，点击")
         foreground_click(hwnd, EXTRA_CHECK_POINT[0], EXTRA_CHECK_POINT[1])
+        sleep_check(0.3)
         foreground_click(hwnd, EXTRA_CHECK_POINT[0], EXTRA_CHECK_POINT[1])
     else:
         print(f"  → ({EXTRA_CHECK_POINT[0]},{EXTRA_CHECK_POINT[1]}) 未命中（实际 {c}），点击 {EXTRA_CLICK_ALT}")
@@ -439,6 +603,7 @@ def on_extra(hwnd, buf, w, h):
             return
         print(f"  → 再点击 ({EXTRA_CHECK_POINT[0]},{EXTRA_CHECK_POINT[1]})")
         foreground_click(hwnd, EXTRA_CHECK_POINT[0], EXTRA_CHECK_POINT[1])
+        sleep_check(0.3)
         foreground_click(hwnd, EXTRA_CHECK_POINT[0], EXTRA_CHECK_POINT[1])
 
 
@@ -459,7 +624,7 @@ HANDLERS = {
 
 
 def probe(hwnd):
-    """单次探测：打印规则色值 + 找图匹配分（不点击），用于校准坐标/阈值。"""
+    """单次探测：打印规则色值 + OCR 识别结果（不点击），用于校准坐标/阈值。"""
     cap = capture_window(hwnd)
     if cap is None:
         print("[!] 截图失败（窗口可能被最小化）")
@@ -490,9 +655,22 @@ def probe(hwnd):
             print(f"  [!] {path} 模板 {tw}x{th} 超过搜索区 {x2 - x1}x{y2 - y1}，无法匹配")
         else:
             x, y, score = r
+            locs = find_all_images(buf, w, h, path, x1, y1, x2, y2)
             hit = "✅ 命中" if x is not None else "❌ 未达阈值"
             print(f"  [ ] {path} 模板 {tw}x{th}  最高匹配分 {score:.3f}  "
-                  f"位置 ({x},{y})  {hit}")
+                  f"命中 {len(locs)} 处 {locs}  {hit}")
+
+    print("[*] OCR dry-run（不点击）：")
+    import ocr_utils
+    img = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)[:, :, :3]  # BGRA -> BGR
+    texts = ocr_utils.recognize_regions(img, CARD_OCR_REGIONS)
+    idx, click = best_card(texts)
+    for i, (text, reg, pt) in enumerate(zip(texts, CARD_OCR_REGIONS, CARD_CLICK_POINTS)):
+        print(f"  [ ] 区域{i} {reg} 识别为「{text}」，点击坐标 {pt}")
+    if idx is not None:
+        print(f"  [+] 命中优先级最高的卡牌「{CARD_NAME_LIST[idx]}」，点击 {click}")
+    else:
+        print("  [!] 三个区域都没命中优先级数组里的卡牌，将点击兜底坐标")
 
 
 def main():
