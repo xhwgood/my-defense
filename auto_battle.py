@@ -16,6 +16,8 @@ auto_battle.py —— “我的防线”自动化战斗脚本。
 用法：
     python auto_battle.py            # 运行检测循环（按 F5 停止）
     python auto_battle.py --probe    # 单次探测：打印规则色值 + 找图匹配分（不点击）
+    python auto_battle.py --probe --threshold 0.7   # 用指定阈值探测匹配分
+    python auto_battle.py --threshold 0.7            # 用指定阈值运行检测循环
     python auto_battle.py --cut x1 y1 x2 y2 输出.png   # 抓当前屏幕裁一块模板图
 
 依赖：ctypes（Windows 自带）+ numpy + opencv-python + rapidocr_onnxruntime（OCR）。
@@ -179,6 +181,7 @@ CARD_NAME_LIST = [
     "强化电网",
     "电磁雷网",
     "电磁连锁",
+    # 其他炮台
     "反重力装置",
     "高射轰",
     "燃爆炮",
@@ -393,11 +396,14 @@ def imread_unicode(path):
     return cv2.imdecode(data, cv2.IMREAD_COLOR)
 
 
-def find_image(buf, w, h, tpl_path, x1, y1, x2, y2, threshold=MATCH_THRESHOLD):
+def find_image(buf, w, h, tpl_path, x1, y1, x2, y2, threshold=None):
     """在截图 [x1,y1,x2,y2] 区域内找模板，返回 (x, y, 匹配分)。
 
     x,y 为 None 表示未达阈值；模板尺寸超过搜索区时返回 None。
+    threshold 为 None 时使用全局 MATCH_THRESHOLD（可由 --threshold 覆盖）。
     """
+    if threshold is None:
+        threshold = MATCH_THRESHOLD
     tpl = imread_unicode(tpl_path)
     if tpl is None:
         return None
@@ -415,12 +421,15 @@ def find_image(buf, w, h, tpl_path, x1, y1, x2, y2, threshold=MATCH_THRESHOLD):
     return None, None, float(max_val)
 
 
-def find_all_images(buf, w, h, tpl_path, x1, y1, x2, y2, threshold=MATCH_THRESHOLD):
+def find_all_images(buf, w, h, tpl_path, x1, y1, x2, y2, threshold=None):
     """在截图 [x1,y1,x2,y2] 区域内找出模板的【所有】匹配位置。
 
     返回:  绝对坐标 (x, y) 列表（模板左上角）；无匹配返回空列表。
     同一张卡只报一个点：按匹配分从高到低取互不重叠的峰值，避免相邻像素重复命中。
+    threshold 为 None 时使用全局 MATCH_THRESHOLD（可由 --threshold 覆盖）。
     """
+    if threshold is None:
+        threshold = MATCH_THRESHOLD
     tpl = imread_unicode(tpl_path)
     if tpl is None:
         return []
@@ -549,7 +558,10 @@ def on_choose_card(hwnd, buf, w, h):
 
         # 1) 按优先级顺序识图
         for path in CARD_IMAGE_LIST:
+            r = find_image(buf, w, h, path, x1, y1, x2, y2)
+            score = r[2] if r else 0.0
             locs = find_all_images(buf, w, h, path, x1, y1, x2, y2)
+            print(f"  → 模板 {path} 最高匹配分 {score:.3f}，命中 {len(locs)} 处")
             if not locs:
                 continue  # 这种卡不在画面上，看下一优先级
             if len(locs) == 1:
@@ -740,21 +752,47 @@ def main():
             break
 
 
+def _parse_threshold(argv):
+    """从命令行解析 --threshold <浮点值>，覆盖全局 MATCH_THRESHOLD。
+
+    返回 (threshold, argv_剩余不含该参数)。未提供时 threshold 为 None。
+    """
+    args = list(argv)
+    val = None
+    if "--threshold" in args:
+        i = args.index("--threshold")
+        if i + 1 < len(args):
+            try:
+                val = float(args[i + 1])
+            except ValueError:
+                print(f"[!] --threshold 后应跟数字，忽略：{args[i + 1]}")
+                val = None
+            del args[i:i + 2]
+        else:
+            del args[i]
+    return val, args
+
+
 if __name__ == "__main__":
     _set_dpi_aware()
-    if len(sys.argv) > 1 and sys.argv[1] == "--probe":
+    thr, argv = _parse_threshold(sys.argv[1:])
+    if thr is not None:
+        MATCH_THRESHOLD = thr
+        print(f"[*] 匹配阈值已设为 {MATCH_THRESHOLD}")
+
+    if len(argv) > 0 and argv[0] == "--probe":
         hwnd = find_window("小游戏")
         if hwnd is None:
             print('[!] 未找到“小游戏”窗口，请先打开游戏。')
             sys.exit(1)
         probe(hwnd)
-    elif len(sys.argv) >= 7 and sys.argv[1] == "--cut":
+    elif len(argv) >= 6 and argv[0] == "--cut":
         # 用法: python auto_battle.py --cut x1 y1 x2 y2 输出.png
         hwnd = find_window("小游戏")
         if hwnd is None:
             print('[!] 未找到“小游戏”窗口，请先打开游戏。')
             sys.exit(1)
-        x1, y1, x2, y2 = map(int, sys.argv[2:6])
-        cut_template(hwnd, x1, y1, x2, y2, sys.argv[6])
+        x1, y1, x2, y2 = map(int, argv[1:5])
+        cut_template(hwnd, x1, y1, x2, y2, argv[5])
     else:
         main()
