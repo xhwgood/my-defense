@@ -514,7 +514,7 @@ def on_choose_card(hwnd, buf, w, h):
     """选择卡牌：用 OCR 识别三张卡牌文字，按名字优先级挑一张，点不到则点兜底坐标。"""
     print("  → 检测到选择卡牌场景，OCR 识别卡牌文字…")
     # 卡片有翻转动画：重新截当前画面，并最多重试几次，等卡片翻到正面
-    for attempt in range(4):
+    for attempt in range(2):
         cap = capture_window(hwnd)
         if cap is None:
             print("  → 截图失败")
