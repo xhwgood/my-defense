@@ -120,6 +120,9 @@ SCENE_KEYWORDS = (
     (SCENE_CLEAR, ("通关", "胜利", "完成")),
 )
 
+# 未知画面持续超过该秒数时，向 RECEIVER 发送告警邮件（见 email_notify.py）。
+UNKNOWN_ALERT_SECONDS = 180
+
 # 统一动作坐标（两个客户端通用，不再按客户端区分）。
 START_BTN = (303, 1346)                        # 开始按钮点击
 EXTRA_CLICK_FIRST = (159, 795)                 # 额外机会 第一步点击
@@ -159,7 +162,7 @@ CLIENT_XIAO = ClientConfig(
         (702, 835),
     ),
     card_fallback_click=(150, 840),
-    clear_click=(294, 1281),
+    clear_click=(294, 1317),
 )
 
 # 客户端「抖音」：坐标暂与「小游戏」相同，待按抖音实际画面修改。
@@ -169,9 +172,9 @@ CLIENT_DOUYIN = ClientConfig(
     first_child=True,
     failed_click=(504, 1311),
     card_ocr_regions=(
-        (41, 730, 249, 775),
-        (317, 730, 528, 775),
-        (588, 730, 888, 775),
+        (41, 730, 287, 775),
+        (317, 730, 584, 775),
+        (626, 730, 888, 775),
     ),
     card_click_points=(
         (152, 835),
@@ -179,7 +182,7 @@ CLIENT_DOUYIN = ClientConfig(
         (702, 835),
     ),
     card_fallback_click=(150, 840),
-    clear_click=(284, 1281),
+    clear_click=(284, 1317),
 )
 
 # 当前生效的客户端配置：入口（main / --probe / --cut）按找到的窗口关键字选定。
@@ -644,6 +647,7 @@ def main():
     unknown_start = None
     unknown_dumped = False
     unknown_last_log = None
+    unknown_email_sent = False
     while True:
         check_f5()
         if _stop:
@@ -698,9 +702,26 @@ def main():
                 elif unknown_dumped and time.time() - unknown_last_log >= 10.0:
                     print(f"[调试] 仍在未知画面，已持续 {elapsed:.0f} 秒（无对应动作，等待人工处理）")
                     unknown_last_log = time.time()
+
+                # 未知画面持续超过阈值时发送一次告警邮件（避免每秒重复发送）。
+                if not unknown_email_sent and elapsed >= UNKNOWN_ALERT_SECONDS:
+                    import email_notify
+                    ocr_text = _ocr_region(buf, w, h, SCENE_OCR_REGION)
+                    subject = f"【自动战斗告警】未知画面已持续 {elapsed:.0f} 秒"
+                    body = (
+                        f"自动战斗脚本检测到未知画面已持续 {elapsed:.0f} 秒（约 {elapsed / 60:.1f} 分钟），\n"
+                        f"场景区域 OCR 结果：「{ocr_text}」\n"
+                        f"整屏截图已保存为 _debug_unknown.png，请人工确认当前场景。"
+                    )
+                    email_sent = email_notify.send_alert_email(subject, body)
+                    unknown_email_sent = True
+                    if email_sent:
+                        print("[!] 告警邮件发送成功，停止脚本")
+                        break
         else:
             unknown_start = None
             unknown_dumped = False
+            unknown_email_sent = False
 
         if sleep_check(1.0):
             break

@@ -4,6 +4,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# 本地环境变量与密钥
+.env
+
 # 打包 / 分发
 build/
 dist/
