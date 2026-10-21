@@ -2,7 +2,8 @@
 """
 email_notify.py —— 通过 163 邮箱 SMTP 发送告警邮件。
 
-未知画面持续超过阈值时，auto_battle.py 调用 send_alert_email() 通知人工处理。
+场景连续重复检测达到阈值，或未知画面持续超过阈值时，
+auto_battle.py 调用 send_alert_email() 通知人工处理。
 
 依赖：Python 标准库 smtplib / ssl / email（无需额外安装）。
 """

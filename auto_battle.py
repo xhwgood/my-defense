@@ -121,7 +121,10 @@ SCENE_KEYWORDS = (
     (SCENE_CLEAR, ("通关", "胜利", "完成")),
 )
 
-# 未知画面持续超过该秒数时，向 RECEIVER 发送告警邮件（见 email_notify.py）。
+# 同一场景连续检测达到该次数时发送告警邮件（见 email_notify.py）。
+SCENE_REPEAT_ALERT_COUNT = 10
+
+# 未知画面持续超过该秒数时发送一次告警邮件。
 UNKNOWN_ALERT_SECONDS = 180
 
 # 统一动作坐标（两个客户端通用，不再按客户端区分）。
@@ -648,6 +651,9 @@ def main(forever=False):
 
     print("[*] 开始场景检测（每秒一次，按 F6 停止）...")
     last_scene = None
+    repeated_scene = None
+    repeated_scene_count = 0
+    repeated_scene_alert_sent = False
     unknown_start = None
     unknown_dumped = False
     unknown_last_log = None
@@ -663,12 +669,33 @@ def main(forever=False):
             if last_scene != "截图中断":
                 print("[!] 截图失败（窗口可能被最小化），继续等待…")
                 last_scene = "截图中断"
+            repeated_scene = None
+            repeated_scene_count = 0
+            repeated_scene_alert_sent = False
             if sleep_check(1.0):
                 break
             continue
 
         w, h, buf = cap
         scene, scene_text = detect_scene(buf, w, h)
+        if scene == repeated_scene:
+            repeated_scene_count += 1
+        else:
+            repeated_scene = scene
+            repeated_scene_count = 1
+            repeated_scene_alert_sent = False
+
+        if (repeated_scene_count >= SCENE_REPEAT_ALERT_COUNT
+                and not repeated_scene_alert_sent):
+            import email_notify
+            subject = f"【自动战斗告警】场景「{scene}」已连续检测 {repeated_scene_count} 次"
+            body = (
+                f"自动战斗脚本连续 {repeated_scene_count} 次检测到场景「{scene}」。\n"
+                f"最近一次 OCR 识别结果：「{scene_text}」"
+            )
+            email_notify.send_alert_email(subject, body)
+            repeated_scene_alert_sent = True
+
         if scene != last_scene:
             print(f"[场景] → {scene}（OCR「{scene_text}」）")
             last_scene = scene
@@ -725,6 +752,7 @@ def main(forever=False):
                     if email_sent:
                         print("[!] 告警邮件发送成功，停止脚本")
                         break
+
         else:
             unknown_start = None
             unknown_dumped = False
