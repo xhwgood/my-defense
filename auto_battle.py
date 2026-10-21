@@ -5,7 +5,7 @@ auto_battle.py —— “我的防线”自动化战斗脚本。
 流程：
   1. 找到“小游戏”或“抖音”窗口，把左上角对齐到屏幕 (0,0)；
   2. 进入主循环：每秒对游戏画面 OCR，判断当前场景，再按场景执行对应逻辑；
-  3. 运行中随时按 F5 键可立即停止脚本。
+  3. 运行中随时按 F6 键可立即停止脚本。
 
 当前已实现的场景检测：统一在 (48,111)-(705,342) 区域 OCR，未命中再在 (213,1407)-(632,1503) OCR 一次；命中对应关键词即判定为对应场景：
   开始界面:   文本含“开始”
@@ -17,7 +17,8 @@ auto_battle.py —— “我的防线”自动化战斗脚本。
   支持两个客户端窗口：「小游戏」与「抖音」，各有一套窗口定位与点击坐标（见下方 CLIENT_XIAO / CLIENT_DOUYIN）。
 
 用法：
-    python auto_battle.py            # 运行检测循环（按 F5 停止）
+    python auto_battle.py            # 运行检测循环（按 F6 停止）
+    python auto_battle.py forever    # 启用开始界面的额外点击
     python auto_battle.py --probe    # 单次探测：打印规则色值 + OCR 识别结果（不点击）
     python auto_battle.py --cut x1 y1 x2 y2 输出.png   # 抓当前屏幕裁一块模板图
 
@@ -51,7 +52,7 @@ MOUSEEVENTF_LEFTDOWN = 0x0002
 MOUSEEVENTF_LEFTUP = 0x0004
 VK_MENU = 0x12  # Alt 键，SetForegroundWindow 失败时兜底
 KEYEVENTF_KEYUP = 0x0002
-VK_F5 = 0x74  # 按 F5 立即停止脚本
+VK_F6 = 0x75  # 按 F6 立即停止脚本
 GW_CHILD = 5  # GetWindow 取第一个子窗口
 
 user32 = ctypes.windll.user32
@@ -114,7 +115,7 @@ SCENE_OCR_REGION_FALLBACK = (213, 1334, 632, 1503)
 # 场景名 → 触发关键词（顺序越靠前优先级越高；OCR 文本命中任一关键词即判定为该场景）。
 SCENE_KEYWORDS = (
     (SCENE_START, ("开始",)),
-    (SCENE_CHOOSE_CARD, ("选择卡牌", "等级提升")),
+    (SCENE_CHOOSE_CARD, ("选择卡牌", "等级提升", "临时")),
     (SCENE_FAILED, ("失败",)),
     (SCENE_EXTRA, ("额外", "机会")),
     (SCENE_CLEAR, ("通关", "胜利", "完成")),
@@ -281,20 +282,20 @@ _foreground_hwnd = None   # 切前台用的顶层窗口句柄
 _click_origin = (0, 0)    # 游戏画面客户区在屏幕上的原点，点击时加该偏移
 
 
-def check_f5():
-    """查询 F5 是否被按下；按下则置位停止标记 _stop（含按下沿与按住）。"""
+def check_f6():
+    """查询 F6 是否被按下；按下则置位停止标记 _stop（含按下沿与按住）。"""
     global _stop
-    if (user32.GetAsyncKeyState(VK_F5) & 0x8001) != 0:
+    if (user32.GetAsyncKeyState(VK_F6) & 0x8001) != 0:
         _stop = True
 
 
 def sleep_check(seconds):
-    """分片休眠（每 50ms 检查一次 F5），期间按下 F5 则打印提示并返回 True。"""
+    """分片休眠（每 50ms 检查一次 F6），期间按下 F6 则打印提示并返回 True。"""
     steps = max(1, int(seconds / 0.05))
     for _ in range(steps):
-        check_f5()
+        check_f6()
         if _stop:
-            print("[!] 检测到 F5，停止脚本")
+            print("[!] 检测到 F6，停止脚本")
             return True
         time.sleep(0.05)
     return False
@@ -302,10 +303,10 @@ def sleep_check(seconds):
 
 def wait_scene_change(hwnd, from_scene, timeout=2.0):
     """快速轮询（每 0.1 秒），直到画面离开 from_scene（转场动画）或超时。
-    返回离开后的场景名；超时或按 F5 停止则返回 from_scene。"""
+    返回离开后的场景名；超时或按 F6 停止则返回 from_scene。"""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        check_f5()
+        check_f6()
         if _stop:
             return from_scene
         cap = capture_window(hwnd)
@@ -439,7 +440,7 @@ def bring_to_foreground(hwnd):
 
 def foreground_click(hwnd, x, y):
     """前台真实鼠标点击。x,y 是截图（客户区）坐标，点击时加上游戏画面的屏幕原点偏移。"""
-    check_f5()
+    check_f6()
     if _stop:
         return
     bring_to_foreground(_foreground_hwnd)
@@ -452,10 +453,13 @@ def foreground_click(hwnd, x, y):
 
 
 # ---- 各场景的处理逻辑（后续按需补充）----
-def on_start(hwnd, buf, w, h):
+def on_start(hwnd, buf, w, h, forever=False):
     print(f"  → 检测到开始界面，点击开始按钮 {START_BTN}")
     time.sleep(0.7)
     foreground_click(hwnd, START_BTN[0], START_BTN[1])
+    if forever:
+        time.sleep(0.4)
+        foreground_click(hwnd, 842, 305)
 
 
 # OCR 常把卡牌名尾部的罗马数字等级（Ⅰ/Ⅱ/Ⅲ）误识别成这些形近汉字（如“强化连射Ⅲ”→“强化连射川”）；
@@ -624,7 +628,7 @@ def _relaunch_as_admin():
         return False
 
 
-def main():
+def main(forever=False):
     global CFG, _foreground_hwnd, _click_origin
     _set_dpi_aware()
 
@@ -642,16 +646,16 @@ def main():
 
     hwnd = game_hwnd
 
-    print("[*] 开始场景检测（每秒一次，按 F5 停止）...")
+    print("[*] 开始场景检测（每秒一次，按 F6 停止）...")
     last_scene = None
     unknown_start = None
     unknown_dumped = False
     unknown_last_log = None
     unknown_email_sent = False
     while True:
-        check_f5()
+        check_f6()
         if _stop:
-            print("[!] 检测到 F5，停止脚本")
+            print("[!] 检测到 F6，停止脚本")
             break
 
         cap = capture_window(hwnd)
@@ -674,7 +678,10 @@ def main():
                 # 进入场景后延迟 2 秒再执行，等画面稳定
                 if sleep_check(2):
                     break
-                handler(hwnd, buf, w, h)
+                if scene == SCENE_START:
+                    handler(hwnd, buf, w, h, forever=forever)
+                else:
+                    handler(hwnd, buf, w, h)
                 # 场景脚本结束后先停 1.5 秒，再检测其他场景
                 if sleep_check(1.5):
                     break
@@ -758,4 +765,4 @@ if __name__ == "__main__":
         x1, y1, x2, y2 = map(int, argv[1:5])
         cut_template(game_hwnd, x1, y1, x2, y2, argv[5])
     else:
-        main()
+        main(forever="forever" in argv)
