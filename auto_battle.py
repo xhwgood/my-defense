@@ -633,11 +633,38 @@ def _relaunch_as_admin():
 
 def main(forever=False):
     global CFG, _foreground_hwnd, _click_origin
+    started_at = time.time()
+    started_monotonic = time.monotonic()
+
+    def format_elapsed(seconds):
+        hours, remainder = divmod(int(seconds), 3600)
+        minutes, seconds = divmod(remainder, 60)
+        return f"{hours}小时{minutes}分{seconds}秒"
+
+    def log_stopped():
+        stopped_at = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        elapsed = time.monotonic() - started_monotonic
+        print(f"[*] 脚本停止时间：{stopped_at}，共运行 {format_elapsed(elapsed)}")
+
+    def send_alert_email(email_notify, subject, body):
+        sending_at = time.time()
+        elapsed = time.monotonic() - started_monotonic
+        sending_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(sending_at))
+        print(f"[*] 邮件发送时间：{sending_time}，脚本已运行 {format_elapsed(elapsed)}")
+        body += (
+            f"\n脚本启动时间：{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(started_at))}\n"
+            f"邮件发送时间：{sending_time}\n"
+            f"脚本已运行：{format_elapsed(elapsed)}"
+        )
+        return email_notify.send_alert_email(subject, body)
+
+    print(f"[*] 脚本启动时间：{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(started_at))}")
     _set_dpi_aware()
 
     game_hwnd, top_hwnd, cfg = find_client_window()
     if game_hwnd is None:
         print('[!] 未找到“小游戏”或“抖音”窗口，请先打开游戏。')
+        log_stopped()
         sys.exit(1)
     CFG = cfg
     _foreground_hwnd = top_hwnd
@@ -651,6 +678,8 @@ def main(forever=False):
 
     print("[*] 开始场景检测（每秒一次，按 F6 停止）...")
     last_scene = None
+    previous_detected_scene = None
+    scene_counts = {SCENE_FAILED: 0, SCENE_CLEAR: 0}
     repeated_scene = None
     repeated_scene_count = 0
     repeated_scene_alert_sent = False
@@ -678,6 +707,15 @@ def main(forever=False):
 
         w, h, buf = cap
         scene, scene_text = detect_scene(buf, w, h)
+        if scene != previous_detected_scene:
+            if scene in scene_counts:
+                scene_counts[scene] += 1
+                print(
+                    f"[统计] 挑战失败 {scene_counts[SCENE_FAILED]} 次，"
+                    f"通关 {scene_counts[SCENE_CLEAR]} 次"
+                )
+            previous_detected_scene = scene
+
         if scene == repeated_scene:
             repeated_scene_count += 1
         else:
@@ -691,9 +729,11 @@ def main(forever=False):
             subject = f"【自动战斗告警】场景「{scene}」已连续检测 {repeated_scene_count} 次"
             body = (
                 f"自动战斗脚本连续 {repeated_scene_count} 次检测到场景「{scene}」。\n"
-                f"最近一次 OCR 识别结果：「{scene_text}」"
+                f"最近一次 OCR 识别结果：「{scene_text}」\n"
+                f"挑战失败次数：{scene_counts[SCENE_FAILED]}\n"
+                f"通关次数：{scene_counts[SCENE_CLEAR]}"
             )
-            email_notify.send_alert_email(subject, body)
+            send_alert_email(email_notify, subject, body)
             repeated_scene_alert_sent = True
 
         if scene != last_scene:
@@ -745,9 +785,11 @@ def main(forever=False):
                     body = (
                         f"自动战斗脚本检测到未知画面已持续 {elapsed:.0f} 秒（约 {elapsed / 60:.1f} 分钟），\n"
                         f"场景区域 OCR 结果：「{ocr_text}」\n"
-                        f"整屏截图已保存为 _debug_unknown.png，请人工确认当前场景。"
+                        f"整屏截图已保存为 _debug_unknown.png，请人工确认当前场景。\n"
+                        f"挑战失败次数：{scene_counts[SCENE_FAILED]}\n"
+                        f"通关次数：{scene_counts[SCENE_CLEAR]}"
                     )
-                    email_sent = email_notify.send_alert_email(subject, body)
+                    email_sent = send_alert_email(email_notify, subject, body)
                     unknown_email_sent = True
                     if email_sent:
                         print("[!] 告警邮件发送成功，停止脚本")
@@ -760,6 +802,8 @@ def main(forever=False):
 
         if sleep_check(1.0):
             break
+
+    log_stopped()
 
 
 if __name__ == "__main__":
