@@ -639,7 +639,8 @@ def main(forever=False):
     def format_elapsed(seconds):
         hours, remainder = divmod(int(seconds), 3600)
         minutes, seconds = divmod(remainder, 60)
-        return f"{hours}小时{minutes}分{seconds}秒"
+        hours_text = f"{hours}小时" if hours else ""
+        return f"{hours_text}{minutes}分{seconds}秒"
 
     def log_stopped():
         stopped_at = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
@@ -780,12 +781,8 @@ def main(forever=False):
                 # 未知画面持续超过阈值时发送一次告警邮件（避免每秒重复发送）。
                 if not unknown_email_sent and elapsed >= UNKNOWN_ALERT_SECONDS:
                     import email_notify
-                    ocr_text = _ocr_region(buf, w, h, SCENE_OCR_REGION)
-                    subject = f"【自动战斗告警】未知画面已持续 {elapsed:.0f} 秒"
+                    subject = "【自动战斗告警】检测到未知画面"
                     body = (
-                        f"自动战斗脚本检测到未知画面已持续 {elapsed:.0f} 秒（约 {elapsed / 60:.1f} 分钟），\n"
-                        f"场景区域 OCR 结果：「{ocr_text}」\n"
-                        f"整屏截图已保存为 _debug_unknown.png，请人工确认当前场景。\n"
                         f"挑战失败次数：{scene_counts[SCENE_FAILED]}\n"
                         f"通关次数：{scene_counts[SCENE_CLEAR]}"
                     )
