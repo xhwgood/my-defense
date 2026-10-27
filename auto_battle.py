@@ -734,8 +734,12 @@ def main(forever=False):
                 f"挑战失败次数：{scene_counts[SCENE_FAILED]}\n"
                 f"通关次数：{scene_counts[SCENE_CLEAR]}"
             )
-            send_alert_email(email_notify, subject, body)
+            email_sent = send_alert_email(email_notify, subject, body)
             repeated_scene_alert_sent = True
+            # 任一告警邮件发送成功后立即停止，避免未知画面告警等再次触发导致重复发信。
+            if email_sent:
+                print("[!] 告警邮件发送成功，停止脚本")
+                break
 
         if scene != last_scene:
             print(f"[场景] → {scene}（OCR「{scene_text}」）")
