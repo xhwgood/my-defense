@@ -36,7 +36,7 @@ from typing import NamedTuple, Tuple
 import cv2
 import numpy as np
 
-from card_constants import CARD_NAME_LIST
+from card_policy import CardPolicy
 
 # 修复 Windows 控制台中文乱码
 if hasattr(sys.stdout, "reconfigure"):
@@ -465,39 +465,14 @@ def on_start(hwnd, buf, w, h, forever=False):
         foreground_click(hwnd, 842, 305)
 
 
-# OCR 常把卡牌名尾部的罗马数字等级（Ⅰ/Ⅱ/Ⅲ）误识别成这些形近汉字（如“强化连射Ⅲ”→“强化连射川”）；
-# 卡牌名本身不含这些字，归一化时直接剔除。
-_LEVEL_SUFFIX_LOOKALIKES = set("川州洲丨")
+# 卡牌选择策略：全局优先级 + 局内构筑评分，并记录决策日志（详见 card_policy.py）。
+POLICY = CardPolicy()
 
 
-def _keep_chinese(s):
-    """只保留中文字符：去掉空格、+ 号、罗马数字、数字等 OCR 附带的无关注缀。
-
-    另剔除形近罗马数字的汉字（川/州/洲/丨）——它们只会作为等级后缀被误识别出来。
-    """
-    return "".join(ch for ch in s if "一" <= ch <= "鿿" and ch not in _LEVEL_SUFFIX_LOOKALIKES)
-
-
-# CARD_NAME_LIST 的中文归一化版本，匹配时用，避免每次重复计算。
-_CARD_NAME_NORM = [_keep_chinese(n) for n in CARD_NAME_LIST]
-
-
-def best_card(texts):
-    """在识别出的文字里挑优先级最高的卡牌。
-
-    texts: 三个区域分别识别出的字符串（与 CFG.card_ocr_regions / CFG.card_click_points 一一对应）。
-    返回:  (CARD_NAME_LIST 索引, 对应点击坐标)；全都匹配不到则返回 (None, None)。
-    """
-    best_idx = None
-    best_click = None
-    for text, click in zip(texts, CFG.card_click_points):
-        t = _keep_chinese(text)
-        if t in _CARD_NAME_NORM:
-            idx = _CARD_NAME_NORM.index(t)
-            if best_idx is None or idx < best_idx:
-                best_idx = idx
-                best_click = click
-    return best_idx, best_click
+def _format_candidates(decision):
+    return "，".join(
+        f"{c['name']}(Lv{c['level']},{c['family']},{c['score']:.2f})" for c in decision["candidates"]
+    )
 
 
 def click_card(hwnd, x, y):
@@ -508,20 +483,22 @@ def click_card(hwnd, x, y):
 
 
 def ocr_pick(hwnd, img):
-    """用 OCR 识别三张卡牌文字并按优先级挑一张，返回是否成功点击。"""
+    """OCR 识别三张卡牌，按「全局优先级 + 局内构筑」评分挑一张，返回是否成功点击。"""
     import ocr_utils
     texts = ocr_utils.recognize_regions(img, CFG.card_ocr_regions)
     print(f"  → OCR 结果：{texts}")
-    idx, click = best_card(texts)
-    if idx is not None:
-        print(f"  → OCR 选中最优先卡牌「{CARD_NAME_LIST[idx]}」，点击 {click}")
-        click_card(hwnd, click[0], click[1])
-        return True
-    return False
+    decision = POLICY.choose(texts, CFG.card_click_points, record=True)
+    if decision is None:
+        return False
+    print(f"  → 候选评分：{_format_candidates(decision)}")
+    print(f"  → 选卡「{decision['name']}」Lv{decision['level']}（{decision['family']}，"
+          f"得分 {decision['score']:.2f}），点击 {decision['click']}")
+    click_card(hwnd, decision["click"][0], decision["click"][1])
+    return True
 
 
 def on_choose_card(hwnd, buf, w, h):
-    """选择卡牌：用 OCR 识别三张卡牌文字，按名字优先级挑一张，点不到则点兜底坐标。"""
+    """选择卡牌：用 OCR 识别三张卡牌文字，按上下文评分挑一张，点不到则点兜底坐标。"""
     print("  → 检测到选择卡牌场景，OCR 识别卡牌文字…")
     # 卡片有翻转动画：重新截当前画面，并最多重试几次，等卡片翻到正面
     for attempt in range(2):
@@ -595,15 +572,16 @@ def probe(hwnd):
     text2 = _ocr_region(buf, w, h, SCENE_OCR_REGION_FALLBACK)
     print(f"  [ ] 备选区域 {SCENE_OCR_REGION_FALLBACK} 识别为「{text2}」→ {_match_scene(text2)}")
 
-    print("[*] 卡牌 OCR dry-run（不点击）：")
+    print("[*] 卡牌 OCR dry-run（不点击，当前构筑为空，仅展示评分）：")
     import ocr_utils
     img = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)[:, :, :3]  # BGRA -> BGR
     texts = ocr_utils.recognize_regions(img, CFG.card_ocr_regions)
-    idx, click = best_card(texts)
+    decision = POLICY.choose(texts, CFG.card_click_points, record=False)
     for i, (text, reg, pt) in enumerate(zip(texts, CFG.card_ocr_regions, CFG.card_click_points)):
         print(f"  [ ] 区域{i} {reg} 识别为「{text}」，点击坐标 {pt}")
-    if idx is not None:
-        print(f"  [+] 命中优先级最高的卡牌「{CARD_NAME_LIST[idx]}」，点击 {click}")
+    if decision is not None:
+        print(f"  [+] 候选评分：{_format_candidates(decision)}")
+        print(f"  [+] 当前构筑为空时将选「{decision['name']}」Lv{decision['level']}，点击 {decision['click']}")
     else:
         print("  [!] 三个区域都没命中优先级数组里的卡牌，将点击兜底坐标")
 
@@ -744,6 +722,13 @@ def main(forever=False):
         if scene != last_scene:
             print(f"[场景] → {scene}（OCR「{scene_text}」）")
             last_scene = scene
+            # 卡牌策略的每局边界：开始界面开新局，通关/挑战失败归档本局结果（写进决策日志）。
+            if scene == SCENE_START:
+                POLICY.start_run()
+            elif scene == SCENE_FAILED:
+                POLICY.end_run("lose", f"挑战失败时 OCR「{scene_text}」")
+            elif scene == SCENE_CLEAR:
+                POLICY.end_run("clear", f"通关时 OCR「{scene_text}」")
             # 只在进入新场景时执行一次动作，避免每秒重复点击
             handler = HANDLERS.get(scene)
             if handler:

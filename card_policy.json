@@ -1,0 +1,7 @@
+{
+  "base": 1.0,
+  "family_synergy": 0.12,
+  "family_momentum_threshold": 3,
+  "family_momentum": 0.25,
+  "same_card_bonus": 0.15
+}
