@@ -80,6 +80,11 @@ RAILGUN_CARD_NAMES = [
     "电磁雷网",
 ]
 
+# 火轮型无人机
+FIREWHEEL = [
+    '火轮型无人机',
+]
+
 # 其他炮台
 OTHER_CARD_NAMES = [
     "高射轰",
@@ -90,6 +95,7 @@ OTHER_CARD_NAMES = [
 CARD_NAME_LIST = (
     HIVE_CARD_NAMES
     + ANTIGRAVITY_CARD_NAMES
+    + FIREWHEEL
     + RAILGUN_CARD_NAMES
     + JAMMER_CARD_NAMES
     + OTHER_CARD_NAMES

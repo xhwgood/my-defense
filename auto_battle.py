@@ -705,7 +705,10 @@ def main(forever=False):
         if (repeated_scene_count >= SCENE_REPEAT_ALERT_COUNT
                 and not repeated_scene_alert_sent):
             import email_notify
-            subject = f"【自动战斗告警】场景「{scene}」已连续检测 {repeated_scene_count} 次"
+            subject = (
+                f"【自动战斗告警】胜利：{scene_counts[SCENE_CLEAR]}次，"
+                f"失败：{scene_counts[SCENE_FAILED]}次"
+            )
             body = (
                 f"自动战斗脚本连续 {repeated_scene_count} 次检测到场景「{scene}」。\n"
                 f"最近一次 OCR 识别结果：「{scene_text}」\n"
@@ -770,7 +773,10 @@ def main(forever=False):
                 # 未知画面持续超过阈值时发送一次告警邮件（避免每秒重复发送）。
                 if not unknown_email_sent and elapsed >= UNKNOWN_ALERT_SECONDS:
                     import email_notify
-                    subject = "【自动战斗告警】检测到未知画面"
+                    subject = (
+                        f"【自动战斗告警】胜利：{scene_counts[SCENE_CLEAR]}次，"
+                        f"失败：{scene_counts[SCENE_FAILED]}次"
+                    )
                     body = (
                         f"挑战失败次数：{scene_counts[SCENE_FAILED]}\n"
                         f"通关次数：{scene_counts[SCENE_CLEAR]}"
