@@ -11,6 +11,9 @@ card_policy.py —— 卡牌选择策略：局内上下文评分 + 决策日志�
           + family_momentum（同流派已达到 threshold 张时一次性加成）
           + same_card_bonus（已拥有同名卡，属于升级）
 
+若已拿到某流派的核心卡（CORE_CARD_NAMES），该流派的名次会整体提前到
+CORE_PROMOTE_RANK 位，base 随之抬升，用来表达「拿到核心卡后流派质变」。
+
 权重默认写在 DEFAULT_WEIGHTS，可用同目录的 card_policy.json 覆盖（便于调参）。
 
 每局结束（通关/挑战失败）时，会把本局胜负与各次选牌的特征差追加到 logs/card_policy_samples.jsonl；
@@ -31,6 +34,7 @@ import numpy as np
 from card_constants import (
     ANTIGRAVITY_CARD_NAMES,
     CARD_NAME_LIST,
+    FIREWHEEL,
     HIVE_CARD_NAMES,
     JAMMER_CARD_NAMES,
     OTHER_CARD_NAMES,
@@ -44,6 +48,7 @@ _LOG_PATH = Path(__file__).with_name("logs") / "card_decisions.jsonl"
 _FAMILY_GROUPS = (
     ("蜂巢", HIVE_CARD_NAMES),
     ("反重力", ANTIGRAVITY_CARD_NAMES),
+    ("火轮", FIREWHEEL),
     ("电磁炮", RAILGUN_CARD_NAMES),
     ("干扰", JAMMER_CARD_NAMES),
     ("其他", OTHER_CARD_NAMES),
@@ -54,6 +59,21 @@ FAMILY_BY_INDEX = tuple(
 )
 if len(FAMILY_BY_INDEX) != len(CARD_NAME_LIST):
     raise RuntimeError("card_constants 中 CARD_NAME_LIST 与各流派数组长度不一致")
+
+# 流派默认名次（0 起）与各流派张数，用于把「派内第几张」换算成全局优先级。
+_FAMILY_ORDER = tuple(family for family, _ in _FAMILY_GROUPS)
+_FAMILY_DEFAULT_RANK = {family: rank for rank, family in enumerate(_FAMILY_ORDER)}
+_FAMILY_CARD_COUNT = {family: len(names) for family, names in _FAMILY_GROUPS}
+_WITHIN_FAMILY_INDEX = tuple(
+    i for _, names in _FAMILY_GROUPS for i in range(len(names))
+)
+
+# 质变核心卡：拿到其中任意一张后，该流派整体名次提前到 CORE_PROMOTE_RANK 位（0 起，1 即第二名）。
+# 默认名次已在该位之前的流派（如蜂巢）不受影响；没有核心卡的流派不用写。
+CORE_CARD_NAMES = {
+    "电磁炮": ("陷阱电网",),
+}
+CORE_PROMOTE_RANK = 1
 
 # OCR 常把卡牌名尾部的罗马数字等级误识别成形近字符（如“强化连射Ⅲ”→“强化连射川”），
 # 这些字符只会出现在等级后缀里，解析等级后即可剔除。
@@ -205,8 +225,34 @@ class CardPolicy:
             "same_card_bonus": 1.0 if self.card_counts.get(CARD_NAME_LIST[idx], 0) > 0 else 0.0,
         }
 
+    def _priority_order(self):
+        """当前流派名次：拿到核心卡的流派整体插入到 CORE_PROMOTE_RANK 位。"""
+        promoted = [
+            family for family in _FAMILY_ORDER
+            if _FAMILY_DEFAULT_RANK[family] > CORE_PROMOTE_RANK
+            and any(self.card_counts.get(name, 0) > 0
+                    for name in CORE_CARD_NAMES.get(family, ()))
+        ]
+        order = [family for family in _FAMILY_ORDER if family not in promoted]
+        pos = CORE_PROMOTE_RANK
+        for family in promoted:
+            order.insert(min(pos, len(order)), family)
+            pos += 1
+        return order
+
+    def _priority_base(self, idx):
+        """卡牌全局优先级分（0~1）：按当前流派名次 + 派内顺序换算，随核心卡到手而变化。"""
+        family = FAMILY_BY_INDEX[idx]
+        offset = 0
+        for current in self._priority_order():
+            if current == family:
+                position = offset + _WITHIN_FAMILY_INDEX[idx]
+                return (len(CARD_NAME_LIST) - position) / len(CARD_NAME_LIST)
+            offset += _FAMILY_CARD_COUNT[current]
+        return 0.0
+
     def _score(self, idx):
-        base = (len(CARD_NAME_LIST) - idx) / len(CARD_NAME_LIST)
+        base = self._priority_base(idx)
         feats = self._features(idx)
         score = self.weights["base"] * base
         score += sum(self.weights[key] * feats[key] for key in LEARNED_KEYS)

@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """卡牌常量：各卡组的名字优先级数组（OCR 用）。
 
-索引越小越优先；四个数组按「蜂巢 → 干扰 → 电磁炮 → 其他炮台」的顺序拼接成
-CARD_NAME_LIST，其顺序必须与 auto_battle.py 中的 CARD_IMAGE_LIST 保持一致。
+索引越小越优先；各数组按「蜂巢 → 反重力 → 火轮 → 电磁炮 → 干扰 → 其他炮台」的顺序
+拼接成 CARD_NAME_LIST，其顺序必须与 card_policy.py 中的 _FAMILY_GROUPS 保持一致。
 """
 
 # 蜂巢
