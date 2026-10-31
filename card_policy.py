@@ -11,8 +11,8 @@ card_policy.py —— 卡牌选择策略：局内上下文评分 + 决策日志�
           + family_momentum（同流派已达到 threshold 张时一次性加成）
           + same_card_bonus（已拥有同名卡，属于升级）
 
-若已拿到某流派的核心卡（CORE_CARD_NAMES），该流派的名次会整体提前到
-CORE_PROMOTE_RANK 位，base 随之抬升，用来表达「拿到核心卡后流派质变」。
+若已拿到某流派的核心卡（CORE_CARD_NAMES），该流派的名次会在优先级里上升一位
+（每张核心卡各升一位），base 随之抬升，用来表达「拿到核心卡后流派质变」。
 
 权重默认写在 DEFAULT_WEIGHTS，可用同目录的 card_policy.json 覆盖（便于调参）。
 
@@ -68,12 +68,11 @@ _WITHIN_FAMILY_INDEX = tuple(
     i for _, names in _FAMILY_GROUPS for i in range(len(names))
 )
 
-# 质变核心卡：拿到其中任意一张后，该流派整体名次提前到 CORE_PROMOTE_RANK 位（0 起，1 即第二名）。
-# 默认名次已在该位之前的流派（如蜂巢）不受影响；没有核心卡的流派不用写。
+# 质变核心卡：每拿到其中一张，该流派在优先级里上升一位；已排第一的流派不再上升。
+# 没有核心卡的流派不用写。
 CORE_CARD_NAMES = {
     "电磁炮": ("陷阱电网",),
 }
-CORE_PROMOTE_RANK = 1
 
 # OCR 常把卡牌名尾部的罗马数字等级误识别成形近字符（如“强化连射Ⅲ”→“强化连射川”），
 # 这些字符只会出现在等级后缀里，解析等级后即可剔除。
@@ -226,18 +225,16 @@ class CardPolicy:
         }
 
     def _priority_order(self):
-        """当前流派名次：拿到核心卡的流派整体插入到 CORE_PROMOTE_RANK 位。"""
-        promoted = [
-            family for family in _FAMILY_ORDER
-            if _FAMILY_DEFAULT_RANK[family] > CORE_PROMOTE_RANK
-            and any(self.card_counts.get(name, 0) > 0
-                    for name in CORE_CARD_NAMES.get(family, ()))
-        ]
-        order = [family for family in _FAMILY_ORDER if family not in promoted]
-        pos = CORE_PROMOTE_RANK
-        for family in promoted:
-            order.insert(min(pos, len(order)), family)
-            pos += 1
+        """当前流派名次：每拥有一张核心卡，该流派从当前位置上升一位。"""
+        order = list(_FAMILY_ORDER)
+        for family in _FAMILY_ORDER:
+            steps = sum(1 for name in CORE_CARD_NAMES.get(family, ())
+                        if self.card_counts.get(name, 0) > 0)
+            pos = order.index(family)
+            target = max(0, pos - steps)
+            if target != pos:
+                order.pop(pos)
+                order.insert(target, family)
         return order
 
     def _priority_base(self, idx):
