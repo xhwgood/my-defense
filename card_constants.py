@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """卡牌常量：各卡组的名字优先级数组（OCR 用）。
 
-索引越小越优先；各数组按「蜂巢 → 反重力 → 火轮 → 电磁炮 → 干扰 → 其他炮台」的顺序
-拼接成 CARD_NAME_LIST，其顺序必须与 card_policy.py 中的 _FAMILY_GROUPS 保持一致。
+索引越小越优先；各卡组的顺序由 CARD_FAMILY_GROUPS 统一维护，并据此生成 CARD_NAME_LIST。
 """
 
 # 蜂巢
@@ -104,18 +103,49 @@ FIREWHEEL = [
     '火轮强化',
 ]
 
+# 守护者
+GUARDIAN = [
+    "激光射击",
+    "瓦解射击",
+    "镜像守护",
+    "充能启动",
+    "爆炸子弹",
+    "齐射子弹",
+    "爆炸扩展",
+    "爆炸强化",
+    "能量汲取",
+    "持续充能",
+    "反射强化",
+    "火焰子弹",
+    "反制霰弹",
+    "极速射击",
+    "强化子弹",
+    "穿透子弹",
+    "霰弹进化",
+    "分裂子弹",
+    "冲击子弹",
+    "穿透强化",
+    "电磁子弹",
+]
+
 # 其他炮台
 OTHER_CARD_NAMES = [
     "高射轰",
     "燃爆炮",
 ]
 
-# 卡牌优先级数组（OCR 用）：索引越小越优先；顺序必须与 CARD_IMAGE_LIST 一致。
-CARD_NAME_LIST = (
-    HIVE_CARD_NAMES
-    + ANTIGRAVITY_CARD_NAMES
-    + FIREWHEEL
-    + RAILGUN_CARD_NAMES
-    + JAMMER_CARD_NAMES
-    + OTHER_CARD_NAMES
+# 流派名和卡牌数组的唯一有序注册表；新增流派时在此登记即可同步给策略和 OCR。
+CARD_FAMILY_GROUPS = (
+    ("蜂巢", HIVE_CARD_NAMES),
+    ("反重力", ANTIGRAVITY_CARD_NAMES),
+    ("火轮", FIREWHEEL),
+    ("电磁炮", RAILGUN_CARD_NAMES),
+    ("干扰", JAMMER_CARD_NAMES),
+    ("守护者", GUARDIAN),
+    ("其他", OTHER_CARD_NAMES),
 )
+
+# 卡牌优先级数组（OCR 用）：索引越小越优先。
+CARD_NAME_LIST = [
+    name for _, names in CARD_FAMILY_GROUPS for name in names
+]

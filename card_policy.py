@@ -31,28 +31,12 @@ from pathlib import Path
 
 import numpy as np
 
-from card_constants import (
-    ANTIGRAVITY_CARD_NAMES,
-    CARD_NAME_LIST,
-    FIREWHEEL,
-    HIVE_CARD_NAMES,
-    JAMMER_CARD_NAMES,
-    OTHER_CARD_NAMES,
-    RAILGUN_CARD_NAMES,
-)
+from card_constants import CARD_FAMILY_GROUPS, CARD_NAME_LIST
 
 _CONFIG_PATH = Path(__file__).with_name("card_policy.json")
 _LOG_PATH = Path(__file__).with_name("logs") / "card_decisions.jsonl"
 
-# 卡牌优先级表的流派分组；顺序必须与 card_constants.CARD_NAME_LIST 的拼接顺序一致。
-_FAMILY_GROUPS = (
-    ("蜂巢", HIVE_CARD_NAMES),
-    ("反重力", ANTIGRAVITY_CARD_NAMES),
-    ("火轮", FIREWHEEL),
-    ("电磁炮", RAILGUN_CARD_NAMES),
-    ("干扰", JAMMER_CARD_NAMES),
-    ("其他", OTHER_CARD_NAMES),
-)
+_FAMILY_GROUPS = CARD_FAMILY_GROUPS
 
 FAMILY_BY_INDEX = tuple(
     family for family, names in _FAMILY_GROUPS for _ in names
