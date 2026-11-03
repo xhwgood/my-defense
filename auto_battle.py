@@ -37,10 +37,13 @@ import cv2
 import numpy as np
 
 from card_policy import CardPolicy
+from console_utils import install_color_print
 
 # 修复 Windows 控制台中文乱码
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+install_color_print()
 
 # ---- Win32 常量 ----
 SWP_NOSIZE = 0x0001
