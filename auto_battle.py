@@ -468,6 +468,12 @@ def on_start(hwnd, buf, w, h, forever=False):
 # 卡牌选择策略：全局优先级 + 局内构筑评分，并记录决策日志（详见 card_policy.py）。
 POLICY = CardPolicy()
 
+# 选卡界面「刷新」按钮的点击坐标（客户区坐标）。待补充实际坐标后填写；为 None 时不刷新。
+CARD_REFRESH_CLICK = (500, 1422)  # 填入刷新按钮坐标，例如 (x, y)
+CARD_REFRESH_COUNT = 1          # 每局最多刷新几次
+CARD_REFRESH_SCORE_THRESHOLD = 0.9  # 选中卡评分低于该值就刷新
+_refresh_used = 0               # 本局已刷新次数；通关/挑战失败后归零
+
 
 def _format_candidates(decision):
     return "，".join(
@@ -482,26 +488,23 @@ def click_card(hwnd, x, y):
     foreground_click(hwnd, x, y)
 
 
-def ocr_pick(hwnd, img):
-    """OCR 识别三张卡牌，按「全局优先级 + 局内构筑」评分挑一张，返回是否成功点击。"""
+def ocr_choose(img):
+    """OCR 识别一次卡牌并评分，返回 (texts, decision)；不点击、不记录。"""
     import ocr_utils
     texts = ocr_utils.recognize_regions(img, CFG.card_ocr_regions)
     print(f"  → OCR 结果：{texts}")
-    decision = POLICY.choose(texts, CFG.card_click_points, record=True)
-    if decision is None:
-        return False
-    print(f"  → 候选评分：{_format_candidates(decision)}")
-    print(f"  → 选卡「{decision['name']}」Lv{decision['level']}（{decision['family']}，"
-          f"得分 {decision['score']:.2f}），点击 {decision['click']}")
-    click_card(hwnd, decision["click"][0], decision["click"][1])
-    return True
+    decision = POLICY.choose(texts, CFG.card_click_points, record=False)
+    if decision is not None:
+        print(f"  → 候选评分：{_format_candidates(decision)}")
+    return texts, decision
 
 
 def on_choose_card(hwnd, buf, w, h):
-    """选择卡牌：用 OCR 识别三张卡牌文字，按上下文评分挑一张，点不到则点兜底坐标。"""
+    """选择卡牌：只 OCR 识别一次；未识别出卡牌或最高分低于阈值时，点刷新后再识别。"""
+    global _refresh_used
     print("  → 检测到选择卡牌场景，OCR 识别卡牌文字…")
-    # 卡片有翻转动画：重新截当前画面，并最多重试几次，等卡片翻到正面
-    for attempt in range(2):
+    texts, decision = None, None
+    for attempt in range(CARD_REFRESH_COUNT + 1):
         cap = capture_window(hwnd)
         if cap is None:
             print("  → 截图失败")
@@ -509,13 +512,29 @@ def on_choose_card(hwnd, buf, w, h):
         w, h, buf = cap
         img = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)[:, :, :3]  # BGRA -> BGR
 
-        if ocr_pick(hwnd, img):
+        texts, decision = ocr_choose(img)
+        if decision is not None and decision["score"] >= CARD_REFRESH_SCORE_THRESHOLD:
+            break
+        if _refresh_used >= CARD_REFRESH_COUNT:
+            break
+        if CARD_REFRESH_CLICK is None:
+            print("  → 未配置刷新坐标，跳过刷新")
+            break
+        print(f"  → 识别结果不合格，点击刷新 {CARD_REFRESH_CLICK}")
+        _refresh_used += 1
+        foreground_click(hwnd, CARD_REFRESH_CLICK[0], CARD_REFRESH_CLICK[1])
+        if sleep_check(0.5):
             return
 
-        if attempt < 3 and sleep_check(0.5):
-            return
-    print(f"  → OCR 未识别出卡牌，点击兜底坐标 {CFG.card_fallback_click}")
-    click_card(hwnd, CFG.card_fallback_click[0], CFG.card_fallback_click[1])
+    if decision is None:
+        print(f"  → OCR 未识别出卡牌，点击兜底坐标 {CFG.card_fallback_click}")
+        click_card(hwnd, CFG.card_fallback_click[0], CFG.card_fallback_click[1])
+        return
+
+    best = POLICY.choose(texts, CFG.card_click_points, record=True)
+    print(f"  → 选卡「{best['name']}」Lv{best['level']}（{best['family']}，"
+          f"得分 {best['score']:.2f}），点击 {best['click']}")
+    click_card(hwnd, best["click"][0], best["click"][1])
 
 
 def on_failed(hwnd, buf, w, h):
@@ -610,7 +629,7 @@ def _relaunch_as_admin():
 
 
 def main(forever=False):
-    global CFG, _foreground_hwnd, _click_origin
+    global CFG, _foreground_hwnd, _click_origin, _refresh_used
     started_at = time.time()
     started_monotonic = time.monotonic()
 
@@ -730,8 +749,10 @@ def main(forever=False):
                 POLICY.start_run()
             elif scene == SCENE_FAILED:
                 POLICY.end_run("lose", f"挑战失败时 OCR「{scene_text}」")
+                _refresh_used = 0
             elif scene == SCENE_CLEAR:
                 POLICY.end_run("clear", f"通关时 OCR「{scene_text}」")
+                _refresh_used = 0
             # 只在进入新场景时执行一次动作，避免每秒重复点击
             handler = HANDLERS.get(scene)
             if handler:
