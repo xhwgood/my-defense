@@ -115,6 +115,11 @@ SCENE_CLEAR = "通关"
 SCENE_OCR_REGION = (48, 111, 705, 342)
 SCENE_OCR_REGION_FALLBACK = (213, 1334, 632, 1503)
 
+# 通关/失败场景中的奖励图标检查区域与匹配阈值。
+REWARD_SCAN_REGION = (65, 491, 863, 840)
+REWARD_MATCH_THRESHOLD = 0.8
+REWARD_CLICK = (824, 1341)
+
 # 场景名 → 触发关键词（顺序越靠前优先级越高；OCR 文本命中任一关键词即判定为该场景）。
 SCENE_KEYWORDS = (
     (SCENE_START, ("开始",)),
@@ -429,6 +434,36 @@ def detect_scene(buf, w, h):
     return scene2, text2
 
 
+def click_reward_if_found(hwnd, buf, w, h):
+    """在通关/失败画面查找紫色或金色奖励图标，命中后点击领取。"""
+    x1, y1, x2, y2 = REWARD_SCAN_REGION
+    if not (0 <= x1 < x2 <= w and 0 <= y1 < y2 <= h):
+        print(f"[!] 奖励图标检查区域越界: {REWARD_SCAN_REGION}，画面尺寸 {w}x{h}")
+        return False
+
+    img = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)[:, :, :3]
+    search_area = img[y1:y2, x1:x2]
+    template_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "find_pic")
+    for template_name in ("purple.png", "gold.png"):
+        template_path = os.path.join(template_dir, template_name)
+        template = cv2.imread(template_path, cv2.IMREAD_COLOR)
+        if template is None:
+            print(f"[!] 奖励图标模板读取失败: {template_path}")
+            continue
+        template_h, template_w = template.shape[:2]
+        if template_h > search_area.shape[0] or template_w > search_area.shape[1]:
+            print(f"[!] 奖励图标模板大于检查区域: {template_path}")
+            continue
+
+        result = cv2.matchTemplate(search_area, template, cv2.TM_CCOEFF_NORMED)
+        _, confidence, _, _ = cv2.minMaxLoc(result)
+        if confidence >= REWARD_MATCH_THRESHOLD:
+            print(f"  → 找到奖励图标 {template_name}（匹配度 {confidence:.2f}），点击 {REWARD_CLICK}")
+            foreground_click(hwnd, REWARD_CLICK[0], REWARD_CLICK[1])
+            return True
+    return False
+
+
 # ---- OCR 识别：封装在 ocr_utils.py（recognize / recognize_regions），供多个脚本复用 ----
 
 
@@ -542,6 +577,7 @@ def on_choose_card(hwnd, buf, w, h):
 
 
 def on_failed(hwnd, buf, w, h):
+    click_reward_if_found(hwnd, buf, w, h)
     print(f"  → 检测到挑战失败，点击 {CFG.failed_click}")
     foreground_click(hwnd, CFG.failed_click[0], CFG.failed_click[1])
 
@@ -560,6 +596,7 @@ def on_extra(hwnd, buf, w, h):
 
 
 def on_clear(hwnd, buf, w, h):
+    click_reward_if_found(hwnd, buf, w, h)
     print(f"  → 检测到通关场景，点击 {CFG.clear_click}")
     sleep_check(0.5)
     foreground_click(hwnd, CFG.clear_click[0], CFG.clear_click[1])
