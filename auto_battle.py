@@ -129,9 +129,10 @@ UNKNOWN_ALERT_SECONDS = 180
 
 # 统一动作坐标（两个客户端通用，不再按客户端区分）。
 START_BTN = (303, 1346)                        # 开始按钮点击
-EXTRA_CLICK_FIRST = (159, 795)                 # 额外机会 第一步点击
-EXTRA_CHECK_POINT = (515, 1502)                # 额外机会 第二步判断
-EXTRA_CLICK_ALT = (423, 786)                   # 额外机会 替代点击
+EXTRA_CLICK_FIRST = (159, 795)                 # 额外机会 第 1张牌
+EXTRA_CLICK_SECOND = (423, 786)                   # 额外机会 第 2张牌
+EXTRA_CLICK_THIRD = (759, 786)                   # 额外机会 第 3张牌
+EXTRA_CHECK_POINT = (515, 1502)                # 额外机会 结束
 
 
 # ---- 客户端查找配置 ----
@@ -546,12 +547,11 @@ def on_extra(hwnd, buf, w, h):
     print("  → 检测到额外机会场景")
     print(f"  → 点击 {EXTRA_CLICK_FIRST}")
     foreground_click(hwnd, EXTRA_CLICK_FIRST[0], EXTRA_CLICK_FIRST[1])
-    if sleep_check(0.3):
-        return
-    print(f"  → 点击 {EXTRA_CLICK_ALT}")
-    foreground_click(hwnd, EXTRA_CLICK_ALT[0], EXTRA_CLICK_ALT[1])
-    if sleep_check(0.3):
-        return
+    print(f"  → 点击 {EXTRA_CLICK_SECOND}")
+    foreground_click(hwnd, EXTRA_CLICK_SECOND[0], EXTRA_CLICK_SECOND[1])
+    print(f"  → 点击 {EXTRA_CLICK_THIRD}")
+    foreground_click(hwnd, EXTRA_CLICK_THIRD[0], EXTRA_CLICK_THIRD[1])
+
     print(f"  → 点击 {EXTRA_CHECK_POINT}")
     foreground_click(hwnd, EXTRA_CHECK_POINT[0], EXTRA_CHECK_POINT[1])
 
