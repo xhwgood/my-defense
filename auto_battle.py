@@ -548,10 +548,6 @@ def on_extra(hwnd, buf, w, h):
     foreground_click(hwnd, EXTRA_CLICK_FIRST[0], EXTRA_CLICK_FIRST[1])
     if sleep_check(0.3):
         return
-    print(f"  → 点击 {EXTRA_CHECK_POINT}")
-    foreground_click(hwnd, EXTRA_CHECK_POINT[0], EXTRA_CHECK_POINT[1])
-    if sleep_check(0.3):
-        return
     print(f"  → 点击 {EXTRA_CLICK_ALT}")
     foreground_click(hwnd, EXTRA_CLICK_ALT[0], EXTRA_CLICK_ALT[1])
     if sleep_check(0.3):
