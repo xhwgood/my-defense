@@ -60,6 +60,10 @@ GW_CHILD = 5  # GetWindow 取第一个子窗口
 
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
+kernel32 = ctypes.windll.kernel32
+
+kernel32.SetConsoleTitleW.argtypes = [wintypes.LPCWSTR]
+kernel32.SetConsoleTitleW.restype = wintypes.BOOL
 
 user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int,
                                 ctypes.c_int, ctypes.c_int, ctypes.c_int,
@@ -299,6 +303,18 @@ def check_f6():
     global _stop
     if (user32.GetAsyncKeyState(VK_F6) & 0x8001) != 0:
         _stop = True
+
+
+def set_console_title(title):
+    if not kernel32.SetConsoleTitleW(title):
+        print("[!] 更新终端标题失败")
+
+
+def format_battle_counts(scene_counts):
+    return (
+        f"胜利：{scene_counts[SCENE_CLEAR]}次，"
+        f"失败：{scene_counts[SCENE_FAILED]}次"
+    )
 
 
 def sleep_check(seconds):
@@ -747,10 +763,8 @@ def main(forever=False):
         if scene != previous_detected_scene:
             if scene in scene_counts:
                 scene_counts[scene] += 1
-                print(
-                    f"[统计] 挑战失败 {scene_counts[SCENE_FAILED]} 次，"
-                    f"通关 {scene_counts[SCENE_CLEAR]} 次"
-                )
+                print(f"[统计] {format_battle_counts(scene_counts)}")
+                set_console_title(format_battle_counts(scene_counts))
             previous_detected_scene = scene
 
         if scene == repeated_scene:
@@ -763,15 +777,12 @@ def main(forever=False):
         if (repeated_scene_count >= SCENE_REPEAT_ALERT_COUNT
                 and not repeated_scene_alert_sent):
             import email_notify
-            subject = (
-                f"【自动战斗告警】胜利：{scene_counts[SCENE_CLEAR]}次，"
-                f"失败：{scene_counts[SCENE_FAILED]}次"
-            )
+            battle_counts = format_battle_counts(scene_counts)
+            subject = f"【自动战斗告警】{battle_counts}"
             body = (
                 f"自动战斗脚本连续 {repeated_scene_count} 次检测到场景「{scene}」。\n"
                 f"最近一次 OCR 识别结果：「{scene_text}」\n"
-                f"挑战失败次数：{scene_counts[SCENE_FAILED]}\n"
-                f"通关次数：{scene_counts[SCENE_CLEAR]}"
+                f"{battle_counts}"
             )
             email_sent = send_alert_email(email_notify, subject, body)
             repeated_scene_alert_sent = True
@@ -833,14 +844,9 @@ def main(forever=False):
                 # 未知画面持续超过阈值时发送一次告警邮件（避免每秒重复发送）。
                 if not unknown_email_sent and elapsed >= UNKNOWN_ALERT_SECONDS:
                     import email_notify
-                    subject = (
-                        f"【自动战斗告警】胜利：{scene_counts[SCENE_CLEAR]}次，"
-                        f"失败：{scene_counts[SCENE_FAILED]}次"
-                    )
-                    body = (
-                        f"挑战失败次数：{scene_counts[SCENE_FAILED]}\n"
-                        f"通关次数：{scene_counts[SCENE_CLEAR]}"
-                    )
+                    battle_counts = format_battle_counts(scene_counts)
+                    subject = f"【自动战斗告警】{battle_counts}"
+                    body = battle_counts
                     email_sent = send_alert_email(email_notify, subject, body)
                     unknown_email_sent = True
                     if email_sent:
@@ -855,6 +861,7 @@ def main(forever=False):
         if sleep_check(1.0):
             break
 
+    print(format_battle_counts(scene_counts))
     log_stopped()
 
 
