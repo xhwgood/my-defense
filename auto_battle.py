@@ -158,7 +158,7 @@ class ClientConfig(NamedTuple):
     clear_click: Tuple[int, int]                          # 通关 点击
 
 
-# 客户端「小游戏」：当前生效的查找配置。
+# 客户端「抖音windows - 小游戏」：当前生效的查找配置。
 CLIENT_XIAO = ClientConfig(
     keyword="小游戏",
     window_class="",
@@ -178,12 +178,12 @@ CLIENT_XIAO = ClientConfig(
     clear_click=(294, 1317),
 )
 
-# 客户端「抖音」：坐标暂与「小游戏」相同，待按抖音实际画面修改。
+# 客户端「抖音安卓」：坐标暂与「小游戏」相同，待按抖音实际画面修改。
 CLIENT_DOUYIN = ClientConfig(
     keyword="抖音",
     window_class="Qt5152QWindowIcon",
     first_child=True,
-    failed_click=(504, 1311),
+    failed_click=(524, 1311),
     card_ocr_regions=(
         (41, 730, 287, 775),
         (317, 730, 584, 775),
@@ -592,6 +592,9 @@ def on_extra(hwnd, buf, w, h):
     foreground_click(hwnd, EXTRA_CLICK_THIRD[0], EXTRA_CLICK_THIRD[1])
 
     print(f"  → 点击 {EXTRA_CHECK_POINT}")
+    foreground_click(hwnd, EXTRA_CHECK_POINT[0], EXTRA_CHECK_POINT[1])
+    sleep_check(0.3)
+    print(f"  → 再次点击，跳过进阶的动画")
     foreground_click(hwnd, EXTRA_CHECK_POINT[0], EXTRA_CHECK_POINT[1])
 
 
