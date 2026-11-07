@@ -461,7 +461,7 @@ def click_reward_if_found(hwnd, buf, w, h):
     img = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)[:, :, :3]
     search_area = img[y1:y2, x1:x2]
     template_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "find_pic")
-    for template_name in ("purple.png", "gold.png"):
+    for template_name in ("purple.png", "gold.png", "blue.png"):
         template_path = os.path.join(template_dir, template_name)
         template = cv2.imread(template_path, cv2.IMREAD_COLOR)
         if template is None:
