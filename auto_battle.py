@@ -141,6 +141,7 @@ UNKNOWN_ALERT_SECONDS = 180
 
 # 统一动作坐标（两个客户端通用，不再按客户端区分）。
 START_BTN = (303, 1346)                        # 开始按钮点击
+START_CURRENCY_CLICK = (813, 320)              # 开始界面包含人民币符号时的额外点击
 EXTRA_CLICK_FIRST = (159, 795)                 # 额外机会 第 1张牌
 EXTRA_CLICK_SECOND = (423, 786)                   # 额外机会 第 2张牌
 EXTRA_CLICK_THIRD = (759, 786)                   # 额外机会 第 3张牌
@@ -796,6 +797,9 @@ def main(forever=False):
             last_scene = scene
             # 卡牌策略的每局边界：开始界面开新局，通关/挑战失败归档本局结果（写进决策日志）。
             if scene == SCENE_START:
+                if any(symbol in scene_text for symbol in ("￥", "¥")):
+                    print(f"  → 开始界面 OCR 包含人民币符号，先点击 {START_CURRENCY_CLICK}")
+                    foreground_click(hwnd, START_CURRENCY_CLICK[0], START_CURRENCY_CLICK[1])
                 POLICY.start_run()
             elif scene == SCENE_FAILED:
                 POLICY.end_run("lose", f"挑战失败时 OCR「{scene_text}」")

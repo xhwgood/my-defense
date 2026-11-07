@@ -9,8 +9,8 @@ HIVE_CARD_NAMES = [
     "蜂巢",
     "密集蜂群",
     "电流蜂群",
-    "强化连射",
     "黄蜂齐射",
+    "强化连射",
     "蜂群回收",
     "波动增强",
     "接触波动",
@@ -135,9 +135,9 @@ CARD_FAMILY_GROUPS = (
     ("蜂巢", HIVE_CARD_NAMES),
     ("反重力", ANTIGRAVITY_CARD_NAMES),
     ("火轮", FIREWHEEL),
-    ("电磁炮", RAILGUN_CARD_NAMES),
-    ("干扰", JAMMER_CARD_NAMES),
     ("守护者", GUARDIAN),
+    ("干扰", JAMMER_CARD_NAMES),
+    ("电磁炮", RAILGUN_CARD_NAMES),
     ("其他", OTHER_CARD_NAMES),
 )
 
