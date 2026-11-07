@@ -57,6 +57,7 @@ VK_MENU = 0x12  # Alt 键，SetForegroundWindow 失败时兜底
 KEYEVENTF_KEYUP = 0x0002
 VK_F6 = 0x75  # 按 F6 立即停止脚本
 GW_CHILD = 5  # GetWindow 取第一个子窗口
+GW_HWNDNEXT = 2  # GetWindow 取同级的下一个窗口
 
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
@@ -65,6 +66,8 @@ kernel32 = ctypes.windll.kernel32
 kernel32.SetConsoleTitleW.argtypes = [wintypes.LPCWSTR]
 kernel32.SetConsoleTitleW.restype = wintypes.BOOL
 
+user32.IsWindowVisible.argtypes = [wintypes.HWND]
+user32.IsWindowVisible.restype = wintypes.BOOL
 user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int,
                                 ctypes.c_int, ctypes.c_int, ctypes.c_int,
                                 wintypes.UINT]
@@ -91,6 +94,10 @@ class RECT(ctypes.Structure):
     """Windows RECT 结构：窗口/客户区的矩形边界（left/top/right/bottom）。"""
     _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
                 ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+
+user32.GetClientRect.argtypes = [wintypes.HWND, ctypes.POINTER(RECT)]
+user32.GetClientRect.restype = wintypes.BOOL
 
 
 class BITMAPINFOHEADER(ctypes.Structure):
@@ -155,7 +162,7 @@ class ClientConfig(NamedTuple):
     """一个客户端的窗口定位与点击坐标（场景检测与通用动作坐标已统一，不再按客户端区分）。"""
     keyword: str
     window_class: str                                     # 窗口类名（空串表示不按类名过滤）
-    first_child: bool                                     # 是否用第一个子控件作为游戏画面
+    first_child: bool                                     # 是否从可见子控件中选择最大画面
     failed_click: Tuple[int, int]                         # 挑战失败 点击
     card_ocr_regions: Tuple[Tuple[int, int, int, int], ...]   # 三个卡牌 OCR 区域
     card_click_points: Tuple[Tuple[int, int], ...]        # 与 OCR 区域对应的点击坐标
@@ -241,7 +248,7 @@ def find_window(keyword, wclass=None):
 def resolve_game_window(cfg):
     """按配置找到窗口，返回 (game, top)。
 
-    game：截图/坐标基准窗口（抖音为其第一个子控件）；top：切前台/移动用的顶层窗口。
+    game：截图/坐标基准窗口（抖音为面积最大的可见子控件）；top：切前台/移动用的顶层窗口。
     找不到返回 (None, None)。
     """
     top = find_window(cfg.keyword, cfg.window_class or None)
@@ -250,8 +257,19 @@ def resolve_game_window(cfg):
     game = top
     if cfg.first_child:
         child = user32.GetWindow(top, GW_CHILD)
-        if child:
-            game = child
+        largest_visible_child = None
+        largest_visible_area = 0
+        while child:
+            if user32.IsWindowVisible(child):
+                rect = RECT()
+                if user32.GetClientRect(child, ctypes.byref(rect)):
+                    area = max(0, rect.right - rect.left) * max(0, rect.bottom - rect.top)
+                    if area > largest_visible_area:
+                        largest_visible_child = child
+                        largest_visible_area = area
+            child = user32.GetWindow(child, GW_HWNDNEXT)
+        if largest_visible_child:
+            game = largest_visible_child
     return game, top
 
 
@@ -275,10 +293,10 @@ def _client_screen_origin(hwnd):
 
 
 def move_to_origin(top_hwnd, game_hwnd):
-    """把 game_hwnd（游戏画面）客户区左上角对齐到屏幕 (0,0)，返回对齐后的客户区原点。
+    """把顶层窗口左上角移到屏幕 (0,0)，返回游戏画面客户区的屏幕原点。
 
-    移动的是顶层窗口 top_hwnd（子控件随之移动）：先还原最小化/最大化，再按
-    game 客户区原点相对 top 窗口原点的偏移移动，补偿标题栏/边框及子控件偏移。
+    移动的是顶层窗口 top_hwnd（子控件随之移动）。不要按 game_hwnd 的原点反推位置：
+    子窗口可能位于顶层窗口内部较深处，按其偏移对齐会把顶层窗口大幅移出屏幕。
     """
     if user32.IsIconic(top_hwnd):
         user32.ShowWindow(top_hwnd, SW_RESTORE)
@@ -287,10 +305,7 @@ def move_to_origin(top_hwnd, game_hwnd):
         user32.ShowWindow(top_hwnd, SW_RESTORE)
         time.sleep(0.3)
 
-    gx, gy = _client_screen_origin(game_hwnd)
-    r = RECT()
-    user32.GetWindowRect(top_hwnd, ctypes.byref(r))
-    user32.SetWindowPos(top_hwnd, 0, r.left - gx, r.top - gy, 0, 0, SWP_NOSIZE | SWP_NOZORDER)
+    user32.SetWindowPos(top_hwnd, 0, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOZORDER)
     return _client_screen_origin(game_hwnd)
 
 
@@ -489,12 +504,12 @@ def bring_to_foreground(hwnd):
     """把窗口切到前台（最小化则先还原），失败时用 Alt 键兜底。"""
     if user32.IsIconic(hwnd):
         user32.ShowWindow(hwnd, SW_RESTORE)
-        time.sleep(0.3)
+        time.sleep(0.1)
     if not user32.SetForegroundWindow(hwnd):
         user32.keybd_event(VK_MENU, 0, 0, 0)
         user32.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
         user32.SetForegroundWindow(hwnd)
-    time.sleep(0.3)
+    time.sleep(0.1)
 
 
 def foreground_click(hwnd, x, y):
@@ -511,10 +526,9 @@ def foreground_click(hwnd, x, y):
     user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
 
 
-# ---- 各场景的处理逻辑（后续按需补充）----
 def on_start(hwnd, buf, w, h, forever=False):
     print(f"  → 检测到开始界面，点击开始按钮 {START_BTN}")
-    time.sleep(0.7)
+    # time.sleep(0.2)
     foreground_click(hwnd, START_BTN[0], START_BTN[1])
     if forever:
         time.sleep(0.4)
