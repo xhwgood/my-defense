@@ -554,7 +554,7 @@ def _format_candidates(decision):
 def click_card(hwnd, x, y):
     """点击某张卡牌，并连点两次（跳过卡牌进阶动画）。"""
     foreground_click(hwnd, x, y)
-    time.sleep(0.3)
+    time.sleep(0.6)
     foreground_click(hwnd, x, y)
 
 
@@ -624,7 +624,7 @@ def on_extra(hwnd, buf, w, h):
 
     print(f"  → 点击 {EXTRA_CHECK_POINT}")
     foreground_click(hwnd, EXTRA_CHECK_POINT[0], EXTRA_CHECK_POINT[1])
-    sleep_check(0.3)
+    sleep_check(0.6)
     print(f"  → 再次点击，跳过进阶的动画")
     foreground_click(hwnd, EXTRA_CHECK_POINT[0], EXTRA_CHECK_POINT[1])
 
