@@ -207,7 +207,7 @@ CLIENT_DOUYIN = ClientConfig(
         (702, 835),
     ),
     card_fallback_click=(150, 840),
-    clear_click=(284, 1317),
+    clear_click=(302, 1317),
 )
 
 # 当前生效的客户端配置：入口（main / --probe / --cut）按找到的窗口关键字选定。
