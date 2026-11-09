@@ -123,6 +123,30 @@ GUARDIAN = [
     "电磁子弹",
 ]
 
+# 雷电发生器
+ELECTRICITY_GENERATOR = [
+    "雷电发生器",
+    "连续雷击",
+    "迅捷雷击",
+    "额外雷击",
+    "雷击麻痹",
+    "闪电链",
+    "雷击扩张",
+    "击杀导电",
+    "麻痹延长",
+    "生命侵蚀",
+    "闪电链增幅",
+    "麻痹电击",
+    "雷击锁链",
+    "雷链打击",
+    "雷击余波",
+    "雷击轨迹",
+    "雷引激光",
+    "闪电链干扰",
+    "雷击爆破",
+    "雷击增幅",
+]
+
 # 其他炮台
 OTHER_CARD_NAMES = [
     "高射轰",
@@ -135,11 +159,12 @@ OTHER_CARD_NAMES = [
 # 流派名和卡牌数组的唯一有序注册表；新增流派时在此登记即可同步给策略和 OCR。
 CARD_FAMILY_GROUPS = (
     ("蜂巢", HIVE_CARD_NAMES),
-    ("反重力", ANTIGRAVITY_CARD_NAMES),
     ("火轮", FIREWHEEL),
+    ("反重力", ANTIGRAVITY_CARD_NAMES),
     ("守护者", GUARDIAN),
     ("干扰", JAMMER_CARD_NAMES),
     ("电磁炮", RAILGUN_CARD_NAMES),
+    # ("雷电发生器", ELECTRICITY_GENERATOR),
     ("其他", OTHER_CARD_NAMES),
 )
 
