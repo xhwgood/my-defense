@@ -10,6 +10,7 @@ auto_battle.py —— “我的防线”自动化战斗脚本。
 当前已实现的场景检测：统一在 (48,111)-(705,342) 区域 OCR，未命中再在 (213,1407)-(632,1503) OCR 一次；命中对应关键词即判定为对应场景：
   开始界面:   文本含“开始”
   选择卡牌:   文本含“选择卡牌”或“等级提升”
+  巡逻:       文本含“巡逻”
   挑战失败:   文本含“失败”
   额外机会:   文本含“额外”或“机会”
   通关:       文本含“通关”或“胜利”
@@ -117,6 +118,7 @@ class BITMAPINFOHEADER(ctypes.Structure):
 SCENE_UNKNOWN = "未知"
 SCENE_START = "开始界面"
 SCENE_CHOOSE_CARD = "选择卡牌"
+SCENE_PATROL = "巡逻"
 SCENE_FAILED = "挑战失败"
 SCENE_EXTRA = "额外机会"
 SCENE_CLEAR = "通关"
@@ -124,7 +126,7 @@ SCENE_CLEAR = "通关"
 
 # 统一场景检测：先 OCR 主区域，未命中再用备选区域 OCR 一次；命中对应关键词即判定为对应场景。
 SCENE_OCR_REGION = (48, 111, 705, 342)
-SCENE_OCR_REGION_FALLBACK = (213, 1334, 632, 1503)
+SCENE_OCR_REGION_FALLBACK = (213, 1334, 632, 1541)
 
 # 通关/失败场景中的奖励图标检查区域与匹配阈值。
 REWARD_SCAN_REGION = (65, 491, 863, 840)
@@ -135,6 +137,7 @@ REWARD_CLICK = (824, 1341)
 SCENE_KEYWORDS = (
     (SCENE_START, ("开始",)),
     (SCENE_CHOOSE_CARD, ("选择卡牌", "等级提升", "临时")),
+    (SCENE_PATROL, ("巡逻",)),
     (SCENE_FAILED, ("失败",)),
     (SCENE_EXTRA, ("额外", "机会")),
     (SCENE_CLEAR, ("通关", "胜利", "完成")),
@@ -147,8 +150,9 @@ SCENE_REPEAT_ALERT_COUNT = 10
 UNKNOWN_ALERT_SECONDS = 180
 
 # 统一动作坐标（两个客户端通用，不再按客户端区分）。
-START_BTN = (303, 1346)                        # 开始按钮点击
+START_BTN = (303, 1356)                        # 开始按钮点击
 START_CURRENCY_CLICK = (813, 320)              # 开始界面包含人民币符号时的额外点击
+PATROL_CLICK = (735, 1277)                     # 巡逻场景 点击
 EXTRA_CLICK_FIRST = (159, 795)                 # 额外机会 第 1张牌
 EXTRA_CLICK_SECOND = (423, 786)                   # 额外机会 第 2张牌
 EXTRA_CLICK_THIRD = (759, 786)                   # 额外机会 第 3张牌
@@ -535,6 +539,13 @@ def on_start(hwnd, buf, w, h, forever=False):
         foreground_click(hwnd, 842, 305)
 
 
+def on_patrol(hwnd, buf, w, h):
+    print(f"  → 检测到巡逻场景，点击 {PATROL_CLICK}")
+    foreground_click(hwnd, PATROL_CLICK[0], PATROL_CLICK[1])
+    time.sleep(0.8)
+    foreground_click(hwnd, PATROL_CLICK[0], PATROL_CLICK[1])
+
+
 # 卡牌选择策略：全局优先级 + 局内构筑评分，并记录决策日志（详见 card_policy.py）。
 POLICY = CardPolicy()
 
@@ -640,6 +651,7 @@ def on_clear(hwnd, buf, w, h):
 HANDLERS = {
     SCENE_START: on_start,
     SCENE_CHOOSE_CARD: on_choose_card,
+    SCENE_PATROL: on_patrol,
     SCENE_FAILED: on_failed,
     SCENE_EXTRA: on_extra,
     SCENE_CLEAR: on_clear,
