@@ -132,6 +132,9 @@ SCENE_OCR_REGION_FALLBACK = (213, 1334, 632, 1541)
 REWARD_SCAN_REGION = (65, 491, 863, 840)
 REWARD_MATCH_THRESHOLD = 0.8
 REWARD_CLICK = (824, 1341)
+# 失败场景中「失败」按钮的找色区域与 BGR 颜色值
+OVER_COLOR_SCAN_REGION = (269, 1253, 941, 1414)
+FAILED_BUTTON_COLOR_BGR = (0xA3, 0xBB, 0x4D)
 
 # 场景名 → 触发关键词（顺序越靠前优先级越高；OCR 文本命中任一关键词即判定为该场景）。
 SCENE_KEYWORDS = (
@@ -471,7 +474,7 @@ def detect_scene(buf, w, h):
 
 
 def click_reward_if_found(hwnd, buf, w, h):
-    """在通关/失败画面查找紫色或金色奖励图标，命中后点击领取。"""
+    """在通关/失败画面查找奖励图标，命中后点击领取。"""
     x1, y1, x2, y2 = REWARD_SCAN_REGION
     if not (0 <= x1 < x2 <= w and 0 <= y1 < y2 <= h):
         print(f"[!] 奖励图标检查区域越界: {REWARD_SCAN_REGION}，画面尺寸 {w}x{h}")
@@ -493,7 +496,8 @@ def click_reward_if_found(hwnd, buf, w, h):
 
         result = cv2.matchTemplate(search_area, template, cv2.TM_CCOEFF_NORMED)
         _, confidence, _, _ = cv2.minMaxLoc(result)
-        if confidence >= REWARD_MATCH_THRESHOLD:
+        threshold = 0.9 if template_name == "blue.png" else REWARD_MATCH_THRESHOLD
+        if confidence >= threshold:
             print(f"  → 找到奖励图标 {template_name}（匹配度 {confidence:.2f}），点击 {REWARD_CLICK}")
             foreground_click(hwnd, REWARD_CLICK[0], REWARD_CLICK[1])
             return True
@@ -620,8 +624,26 @@ def on_choose_card(hwnd, buf, w, h):
 
 def on_failed(hwnd, buf, w, h):
     click_reward_if_found(hwnd, buf, w, h)
-    print(f"  → 检测到挑战失败，点击 {CFG.failed_click}")
-    foreground_click(hwnd, CFG.failed_click[0], CFG.failed_click[1])
+    x1, y1, x2, y2 = OVER_COLOR_SCAN_REGION
+    click = CFG.failed_click
+    color_found = False
+    if 0 <= x1 < x2 <= w and 0 <= y1 < y2 <= h:
+        img = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)[:, :, :3]
+        matches = np.argwhere(
+            np.all(img[y1:y2, x1:x2] == FAILED_BUTTON_COLOR_BGR, axis=2)
+        )
+        if matches.size:
+            y, x = matches[0]
+            click = (x1 + int(x), y1 + int(y))
+            color_found = True
+    else:
+        print(f"[!] 失败按钮找色区域越界: {OVER_COLOR_SCAN_REGION}，画面尺寸 {w}x{h}")
+
+    if color_found:
+        print(f"  → 找到失败按钮颜色，点击 {click}")
+    else:
+        print(f"  → 未找到失败按钮颜色，点击兜底坐标 {CFG.failed_click}")
+    foreground_click(hwnd, click[0], click[1])
 
 
 def on_extra(hwnd, buf, w, h):
@@ -642,10 +664,27 @@ def on_extra(hwnd, buf, w, h):
 
 def on_clear(hwnd, buf, w, h):
     click_reward_if_found(hwnd, buf, w, h)
-    print(f"  → 检测到通关场景，点击 {CFG.clear_click}")
+    x1, y1, x2, y2 = OVER_COLOR_SCAN_REGION
+    clear_click = CFG.clear_click
+    color_found = False
+    if 0 <= x1 < x2 <= w and 0 <= y1 < y2 <= h:
+        img = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)[:, :, :3]
+        matches = np.argwhere(
+            np.all(img[y1:y2, x1:x2] == (0xBF, 0xA3, 0x3D), axis=2)
+        )
+        if matches.size:
+            y, x = matches[0]
+            clear_click = (x1 + int(x), y1 + int(y))
+            color_found = True
+    else:
+        print(f"[!] 通关按钮找色区域越界: {OVER_COLOR_SCAN_REGION}，画面尺寸 {w}x{h}")
+
+    if color_found:
+        print(f"  → 找到通关按钮颜色，点击 {clear_click}")
+    else:
+        print(f"  → 未找到通关按钮颜色，点击兜底坐标 {CFG.clear_click}")
     sleep_check(0.5)
-    foreground_click(hwnd, CFG.clear_click[0], CFG.clear_click[1])
-    sleep_check(0.5)
+    foreground_click(hwnd, clear_click[0], clear_click[1])
 
 
 HANDLERS = {
