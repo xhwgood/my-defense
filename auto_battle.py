@@ -13,7 +13,7 @@ auto_battle.py —— “我的防线”自动化战斗脚本。
   巡逻:       文本含“巡逻”
   挑战失败:   文本含“失败”
   额外机会:   文本含“额外”或“机会”
-  通关:       文本含“通关”或“胜利”
+  通关:       文本含“通关”或“胜利”，或找到通关按钮颜色
 
   支持两个客户端窗口：「小游戏」与「抖音」，各有一套窗口定位与点击坐标（见下方 CLIENT_XIAO / CLIENT_DOUYIN）。
 
@@ -133,8 +133,10 @@ REWARD_SCAN_REGION = (65, 491, 863, 840)
 REWARD_MATCH_THRESHOLD = 0.8
 REWARD_CLICK = (824, 1341)
 # 失败场景中「失败」按钮的找色区域与 BGR 颜色值
-OVER_COLOR_SCAN_REGION = (269, 1253, 941, 1414)
+OVER_COLOR_SCAN_REGION = (269, 1307, 941, 1414)
 FAILED_BUTTON_COLOR_BGR = (0xA3, 0xBB, 0x4D)
+# 向右偏移
+OFFSET_X = 30
 
 # 场景名 → 触发关键词（顺序越靠前优先级越高；OCR 文本命中任一关键词即判定为该场景）。
 SCENE_KEYWORDS = (
@@ -143,7 +145,7 @@ SCENE_KEYWORDS = (
     (SCENE_PATROL, ("巡逻",)),
     (SCENE_FAILED, ("失败",)),
     (SCENE_EXTRA, ("额外", "机会")),
-    (SCENE_CLEAR, ("通关", "胜利", "完成")),
+    (SCENE_CLEAR, ("通关", "胜利")),
 )
 
 # 同一场景连续检测达到该次数时发送告警邮件（见 email_notify.py）。
@@ -441,10 +443,7 @@ def save_frame_png(w, h, buf, out_path):
 
 
 def _ocr_region(buf, w, h, region):
-    """OCR 识别指定区域 region，返回文本；区域越界或识别失败返回空串。"""
-    x1, y1, x2, y2 = region
-    if not (0 <= x1 and 0 <= y1 and x2 <= w and y2 <= h):
-        return ""
+    """OCR 识别指定区域 region，返回文本。"""
     import ocr_utils
     img = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)[:, :, :3]  # BGRA -> BGR
     return ocr_utils.recognize(img, region)
@@ -452,14 +451,30 @@ def _ocr_region(buf, w, h, region):
 
 def _match_scene(text):
     """按 SCENE_KEYWORDS 把 OCR 文本映射成场景名；匹配不到返回 SCENE_UNKNOWN。"""
+    # "普通关卡" contains "通关" as a substring, but is not a clear result.
+    text = text.replace("普通关卡", "")
     for scene, keywords in SCENE_KEYWORDS:
         if any(k in text for k in keywords):
             return scene
     return SCENE_UNKNOWN
 
 
+def _find_button_color(buf, w, h, color):
+    x1, y1, x2, y2 = OVER_COLOR_SCAN_REGION
+    if not (0 <= x1 < x2 <= w and 0 <= y1 < y2 <= h):
+        return None
+
+    img = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)[:, :, :3]
+    matches = np.argwhere(np.all(img[y1:y2, x1:x2] == color, axis=2))
+    if not matches.size:
+        return None
+
+    y, x = matches[0]
+    return x1 + int(x) + OFFSET_X, y1 + int(y)
+
+
 def detect_scene(buf, w, h):
-    """统一场景检测：先 OCR 主区域，未命中再用备选区域 OCR 一次。
+    """统一场景检测：OCR 两个区域，并用通关按钮颜色补充确认。
 
     返回 (scene, text)：scene 为场景名，text 为命中的 OCR 文本（未命中时为空串）。
     本函数静默，不打印——打印交给调用方在「场景变化」时进行，避免每秒刷屏。
@@ -468,18 +483,21 @@ def detect_scene(buf, w, h):
     scene = _match_scene(text)
     if scene != SCENE_UNKNOWN:
         return scene, text
+    if _find_button_color(buf, w, h, (0xBF, 0xA3, 0x3D)) is not None:
+        return SCENE_CLEAR, text
+
     text2 = _ocr_region(buf, w, h, SCENE_OCR_REGION_FALLBACK)
     scene2 = _match_scene(text2)
-    return scene2, text2
+    if scene2 != SCENE_UNKNOWN:
+        return scene2, text2
+    if _find_button_color(buf, w, h, (0xBF, 0xA3, 0x3D)) is not None:
+        return SCENE_CLEAR, text2
+    return SCENE_UNKNOWN, text2
 
 
 def click_reward_if_found(hwnd, buf, w, h):
     """在通关/失败画面查找奖励图标，命中后点击领取。"""
     x1, y1, x2, y2 = REWARD_SCAN_REGION
-    if not (0 <= x1 < x2 <= w and 0 <= y1 < y2 <= h):
-        print(f"[!] 奖励图标检查区域越界: {REWARD_SCAN_REGION}，画面尺寸 {w}x{h}")
-        return False
-
     img = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)[:, :, :3]
     search_area = img[y1:y2, x1:x2]
     template_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "find_pic")
@@ -624,20 +642,11 @@ def on_choose_card(hwnd, buf, w, h):
 
 def on_failed(hwnd, buf, w, h):
     click_reward_if_found(hwnd, buf, w, h)
-    x1, y1, x2, y2 = OVER_COLOR_SCAN_REGION
     click = CFG.failed_click
-    color_found = False
-    if 0 <= x1 < x2 <= w and 0 <= y1 < y2 <= h:
-        img = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)[:, :, :3]
-        matches = np.argwhere(
-            np.all(img[y1:y2, x1:x2] == FAILED_BUTTON_COLOR_BGR, axis=2)
-        )
-        if matches.size:
-            y, x = matches[0]
-            click = (x1 + int(x), y1 + int(y))
-            color_found = True
-    else:
-        print(f"[!] 失败按钮找色区域越界: {OVER_COLOR_SCAN_REGION}，画面尺寸 {w}x{h}")
+    detected_click = _find_button_color(buf, w, h, FAILED_BUTTON_COLOR_BGR)
+    color_found = detected_click is not None
+    if detected_click is not None:
+        click = detected_click
 
     if color_found:
         print(f"  → 找到失败按钮颜色，点击 {click}")
@@ -664,20 +673,11 @@ def on_extra(hwnd, buf, w, h):
 
 def on_clear(hwnd, buf, w, h):
     click_reward_if_found(hwnd, buf, w, h)
-    x1, y1, x2, y2 = OVER_COLOR_SCAN_REGION
     clear_click = CFG.clear_click
-    color_found = False
-    if 0 <= x1 < x2 <= w and 0 <= y1 < y2 <= h:
-        img = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)[:, :, :3]
-        matches = np.argwhere(
-            np.all(img[y1:y2, x1:x2] == (0xBF, 0xA3, 0x3D), axis=2)
-        )
-        if matches.size:
-            y, x = matches[0]
-            clear_click = (x1 + int(x), y1 + int(y))
-            color_found = True
-    else:
-        print(f"[!] 通关按钮找色区域越界: {OVER_COLOR_SCAN_REGION}，画面尺寸 {w}x{h}")
+    detected_click = _find_button_color(buf, w, h, (0xBF, 0xA3, 0x3D))
+    color_found = detected_click is not None
+    if detected_click is not None:
+        clear_click = detected_click
 
     if color_found:
         print(f"  → 找到通关按钮颜色，点击 {clear_click}")
@@ -797,8 +797,8 @@ def main(forever=False):
 
     print("[*] 开始场景检测（每秒一次，按 F6 停止）...")
     last_scene = None
-    previous_detected_scene = None
     scene_counts = {SCENE_FAILED: 0, SCENE_CLEAR: 0}
+    battle_result_counted = False
     repeated_scene = None
     repeated_scene_count = 0
     repeated_scene_alert_sent = False
@@ -826,12 +826,13 @@ def main(forever=False):
 
         w, h, buf = cap
         scene, scene_text = detect_scene(buf, w, h)
-        if scene != previous_detected_scene:
-            if scene in scene_counts:
-                scene_counts[scene] += 1
-                print(f"[统计] {format_battle_counts(scene_counts)}")
-                set_console_title(format_battle_counts(scene_counts))
-            previous_detected_scene = scene
+        if scene == SCENE_START:
+            battle_result_counted = False
+        elif scene in scene_counts and not battle_result_counted:
+            scene_counts[scene] += 1
+            battle_result_counted = True
+            print(f"[统计] {format_battle_counts(scene_counts)}")
+            set_console_title(format_battle_counts(scene_counts))
 
         if scene == repeated_scene:
             repeated_scene_count += 1
