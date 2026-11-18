@@ -27,11 +27,14 @@ auto_battle.py —— “我的防线”自动化战斗脚本。
 """
 
 import ctypes
+import json
 import os
 import subprocess
 import sys
 import time
 from ctypes import wintypes
+from datetime import date, datetime
+from pathlib import Path
 from typing import NamedTuple, Tuple
 
 import cv2
@@ -132,6 +135,11 @@ SCENE_OCR_REGION_FALLBACK = (213, 1334, 632, 1541)
 REWARD_SCAN_REGION = (65, 491, 863, 840)
 REWARD_MATCH_THRESHOLD = 0.8
 REWARD_CLICK = (824, 1341)
+REWARD_DAILY_LIMIT = 3
+REWARD_STATE_PATH = Path(__file__).with_name("logs") / "reward_click_state.json"
+_reward_state_date = None
+_reward_click_count = None
+_reward_cache_unavailable = False
 # 失败场景中「失败」按钮的找色区域与 BGR 颜色值
 OVER_COLOR_SCAN_REGION = (269, 1307, 941, 1414)
 FAILED_BUTTON_COLOR_BGR = (0xA3, 0xBB, 0x4D)
@@ -495,11 +503,101 @@ def detect_scene(buf, w, h):
     return SCENE_UNKNOWN, text2
 
 
+def get_today_reward_click_count():
+    """读取本地缓存中的今日奖励点击数；缓存损坏时返回 None 并停止自动领取。"""
+    global _reward_state_date, _reward_click_count, _reward_cache_unavailable
+    today = date.today().isoformat()
+    if _reward_state_date == today:
+        return _reward_click_count
+
+    _reward_state_date = today
+    _reward_click_count = 0
+    _reward_cache_unavailable = False
+    try:
+        state = json.loads(REWARD_STATE_PATH.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return 0
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        print(f"[!] 读取今日奖励缓存失败，暂停自动领取：{type(exc).__name__}: {exc}")
+        _reward_click_count = None
+        _reward_cache_unavailable = True
+        return None
+
+    if not isinstance(state, dict):
+        print("[!] 今日奖励缓存格式无效，暂停自动领取")
+        _reward_click_count = None
+        _reward_cache_unavailable = True
+        return None
+    if state.get("date") != today:
+        return 0
+
+    count = state.get("count")
+    if type(count) is not int or count < 0:
+        print("[!] 今日奖励缓存次数无效，暂停自动领取")
+        _reward_click_count = None
+        _reward_cache_unavailable = True
+        return None
+
+    _reward_click_count = count
+    return count
+
+
+def _record_reward_click():
+    """将本次奖励点击写入本地缓存；写入失败时暂停本进程的后续自动领取。"""
+    global _reward_click_count, _reward_cache_unavailable
+    count = get_today_reward_click_count()
+    if count is None or _reward_cache_unavailable:
+        return False
+    _reward_click_count = count + 1
+    today = date.today().isoformat()
+    try:
+        REWARD_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        REWARD_STATE_PATH.write_text(
+            json.dumps({"date": today, "count": _reward_click_count}, indent=2),
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        _reward_cache_unavailable = True
+        print(f"[!] 保存今日奖励缓存失败，暂停后续自动领取：{type(exc).__name__}: {exc}")
+        return False
+    return True
+
+
+def reward_match_threshold(template_name, now=None, remaining_count=None):
+    """根据当前时间和今日剩余次数计算奖励模板匹配阈值。"""
+    if template_name not in ("blue.png", "purple.png", "gold.png"):
+        raise ValueError(f"未知奖励模板: {template_name}")
+    if now is None:
+        now = datetime.now()
+    if remaining_count is None:
+        clicked_count = get_today_reward_click_count()
+        if clicked_count is None:
+            return None
+        remaining_count = max(0, REWARD_DAILY_LIMIT - clicked_count)
+
+    threshold = 0.9 if template_name == "blue.png" else REWARD_MATCH_THRESHOLD
+    reductions = (
+        now.hour >= 19 and remaining_count >= 3,
+        now.hour >= 20 and remaining_count >= 2,
+        now.hour >= 21 and remaining_count >= 1,
+    )
+    return round(threshold - 0.1 * sum(reductions), 2)
+
+
 def click_reward_if_found(hwnd, buf, w, h):
     """在通关/失败画面查找奖励图标，命中后点击领取。"""
+    count = get_today_reward_click_count()
+    if count is None or _reward_cache_unavailable:
+        print("  → 今日奖励缓存不可用，跳过奖励识别")
+        return False
+    if count >= REWARD_DAILY_LIMIT:
+        print(f"  → 今日奖励点击已达上限（{count}/{REWARD_DAILY_LIMIT}），跳过奖励识别")
+        return False
+
     x1, y1, x2, y2 = REWARD_SCAN_REGION
     img = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)[:, :, :3]
     search_area = img[y1:y2, x1:x2]
+    match_time = datetime.now()
     template_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "find_pic")
     for template_name in ("purple.png", "gold.png", "blue.png"):
         template_path = os.path.join(template_dir, template_name)
@@ -514,10 +612,22 @@ def click_reward_if_found(hwnd, buf, w, h):
 
         result = cv2.matchTemplate(search_area, template, cv2.TM_CCOEFF_NORMED)
         _, confidence, _, _ = cv2.minMaxLoc(result)
-        threshold = 0.9 if template_name == "blue.png" else REWARD_MATCH_THRESHOLD
+        threshold = reward_match_threshold(
+            template_name,
+            now=match_time,
+            remaining_count=REWARD_DAILY_LIMIT - count,
+        )
+        if threshold is None:
+            print("  → 今日奖励次数无法读取，跳过奖励识别")
+            return False
         if confidence >= threshold:
-            print(f"  → 找到奖励图标 {template_name}（匹配度 {confidence:.2f}），点击 {REWARD_CLICK}")
+            print(f"  → 找到奖励图标 {template_name}（匹配度 {confidence:.2f}，阈值 {threshold:.2f}），点击 {REWARD_CLICK}")
             foreground_click(hwnd, REWARD_CLICK[0], REWARD_CLICK[1])
+            if _stop:
+                return False
+            _record_reward_click()
+            if _reward_click_count is not None:
+                print(f"  → 今日奖励点击次数：{_reward_click_count}/{REWARD_DAILY_LIMIT}")
             return True
     return False
 
@@ -770,14 +880,25 @@ def main(forever=False):
         elapsed = time.monotonic() - started_monotonic
         sending_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(sending_at))
         print(f"[*] 邮件发送时间：{sending_time}，脚本已运行 {format_elapsed(elapsed)}")
+        reward_click_count = get_today_reward_click_count()
+        if reward_click_count is None:
+            reward_clicks = "未知（本地缓存不可用）"
+        else:
+            reward_clicks = f"{reward_click_count}/{REWARD_DAILY_LIMIT} 次"
         body += (
             f"\n脚本启动时间：{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(started_at))}\n"
             f"邮件发送时间：{sending_time}\n"
-            f"脚本已运行：{format_elapsed(elapsed)}"
+            f"脚本已运行：{format_elapsed(elapsed)}\n"
+            f"今日奖励点击次数：{reward_clicks}"
         )
         return email_notify.send_alert_email(subject, body)
 
     print(f"[*] 脚本启动时间：{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(started_at))}")
+    reward_click_count = get_today_reward_click_count()
+    if reward_click_count is None:
+        print("[!] 今日奖励点击次数未知；为避免超过上限，自动奖励识别已暂停")
+    else:
+        print(f"[*] 今日奖励点击次数：{reward_click_count}/{REWARD_DAILY_LIMIT}")
     _set_dpi_aware()
 
     game_hwnd, top_hwnd, cfg = find_client_window()
