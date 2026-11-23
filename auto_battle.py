@@ -143,8 +143,9 @@ _reward_cache_unavailable = False
 # 失败场景中「失败」按钮的找色区域与 BGR 颜色值
 OVER_COLOR_SCAN_REGION = (269, 1307, 941, 1414)
 FAILED_BUTTON_COLOR_BGR = (0xA3, 0xBB, 0x4D)
-# 向右偏移
-OFFSET_X = 30
+BUTTON_COLOR_TOLERANCE = 10
+# x 轴偏移
+OFFSET_X = 35
 
 # 场景名 → 触发关键词（顺序越靠前优先级越高；OCR 文本命中任一关键词即判定为该场景）。
 SCENE_KEYWORDS = (
@@ -204,7 +205,7 @@ CLIENT_XIAO = ClientConfig(
         (702, 835),
     ),
     card_fallback_click=(150, 840),
-    clear_click=(294, 1317),
+    clear_click=(304, 1317),
 )
 
 # 客户端「抖音安卓」：坐标暂与「小游戏」相同，待按抖音实际画面修改。
@@ -473,7 +474,11 @@ def _find_button_color(buf, w, h, color):
         return None
 
     img = np.frombuffer(buf, dtype=np.uint8).reshape(h, w, 4)[:, :, :3]
-    matches = np.argwhere(np.all(img[y1:y2, x1:x2] == color, axis=2))
+    region = img[y1:y2, x1:x2].astype(np.int16)
+    target = np.asarray(color, dtype=np.int16)
+    matches = np.argwhere(
+        np.all(np.abs(region - target) <= BUTTON_COLOR_TOLERANCE, axis=2)
+    )
     if not matches.size:
         return None
 
